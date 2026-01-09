@@ -613,14 +613,14 @@ class MinecraftBot:
             # Клавиатура для администраторов
             keyboard = [
                 [KeyboardButton("❓ Вопрос"), KeyboardButton("📝 Набор в модерацию")],
-                [KeyboardButton("📜 Правила клана"), KeyboardButton("👑 Панель администратора")],
+                [KeyboardButton("📜 Информация о клане"), KeyboardButton("👑 Панель администратора")],
                 [KeyboardButton("💬 Обратная связь"), KeyboardButton("ℹ️ О боте")]
             ]
         else:
             # Клавиатура для обычных пользователей
             keyboard = [
                 [KeyboardButton("❓ Вопрос"), KeyboardButton("📝 Набор в модерацию")],
-                [KeyboardButton("📜 Правила клана"), KeyboardButton("💬 Обратная связь")],
+                [KeyboardButton("📜 Информация о клане"), KeyboardButton("💬 Обратная связь")],
                 [KeyboardButton("ℹ️ О боте")]
             ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -749,7 +749,7 @@ class MinecraftBot:
             "Здесь вы можете:\n"
             "• 📝 Подать заявку в модерацию\n"
             "• ❓ Задать вопрос администрации\n" 
-            "• 📜 Ознакомиться с правилами клана\n"
+            "• 📜 Ознакомиться с информацией о клане\n"
             "• 💬 Оставить отзыв о работе бота\n\n"
             "Выберите опцию ниже 👇"
         )
@@ -1784,7 +1784,7 @@ class MinecraftBot:
             return await self.question(update, context)
         elif text == "📝 Набор в модерацию":
             return await self.moderation(update, context)
-        elif text == "📜 Правила клана":
+        elif text == "📜 Информация о клане":
             await self.show_rules(update, context)
         elif text == "👑 Панель администратора" and user_id in ADMIN_IDS:
             await self.admin_panel(update, context)
@@ -2310,6 +2310,7 @@ class MinecraftBot:
 if __name__ == '__main__':
     bot = MinecraftBot()
     bot.run()
+
 
 
 
