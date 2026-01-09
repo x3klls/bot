@@ -1,0 +1,2368 @@
+import logging
+import sqlite3
+import os
+import json
+import csv
+import io
+import asyncio
+import shutil
+from datetime import datetime, timedelta
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, \
+    CallbackQueryHandler
+
+# Настройка логирования
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# ⚠️ ЗАМЕНИТЕ ЭТОТ ТОКЕН НА ВАШ РЕАЛЬНЫЙ ТОКЕН БОТА ⚠️
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8329306602:AAEDUSqKop0dWuSkUXnJAkS3V83Yyx0GdqI")
+
+# ⚠️ ЗАМЕНИТЕ НА ВАШ USER_ID ⚠️
+ADMIN_IDS = [1292233190, 7805404869, 7691643567, 5383429536]
+
+# Состояния для ConversationHandler
+QUESTION, MODERATION, BROADCAST, USER_SEARCH, FEEDBACK = range(5)
+
+# Специальные отображения ID администраторов
+ADMIN_USERNAME_MAP = {
+    1292233190: "@x3klls",
+    7805404869: "@hilliees", 
+    7691643567: "@anchous_faraon",
+    5383429536: "@kanseysau"
+}
+
+# Ссылка на чат для принятых заявок
+CHAT_LINK = "https://t.me/+ctH8Nu0iq_xiZTMy"
+
+# Правила клана Minecraft dyO
+CLAN_RULES = """
+📜 ПРАВИЛА КЛАНА MINECRAFT dyO
+
+⚠️ Вступив на сервер, автоматически соглашаетесь с правилами!
+
+1.1 Публичное обсуждение состава сервера
+🚫 Мут на всём сервере от 3 часов до 3 дней
+
+1.2 Оскорбление участников сервера
+🚫 Мут на всём сервере от 1 часа до 1 дня
+
+1.3 Оскорбление и унижение родных участников сервера
+🚫 Мут на всём сервере от 1 дня до 7 дней
+
+1.4 Оскорбление и унижение состава сервера
+🚫 Мут на всём сервере от 3 дней до 14 дней
+
+1.5 Оскорбление и унижение родных состава сервера
+🚫 Бан навсегда
+
+1.6 Неконструктивная критика сервера или же его состава
+🚫 Мут на всём сервере от 3 дней до 7 дней
+
+1.7 Чрезмерное использование фото, видео, стикеров, эмодзи и т.п.
+🚫 Мут на всём сервере от 30 минут до 3 часов
+
+1.8 Капс(от 3 слов), спам, а также флуд сообщениями
+🚫 Мут на всём сервере от 30 минут до 3 часов
+
+1.9 Разжигание межнациональной, межрасовой, политической, религиозной розни
+🚫 Мут на всём сервере от 1 дня до 7 дней
+
+2.0 Использование команд сервера в обычном чате
+🚫 Мут на всём сервере от 30 минут до 3 часов
+
+2.1 Введение участников в заблуждение
+🚫 Мут на всём сервере от 3 часов до 3 дней
+
+2.2 Призыв не вступать в Discord Сервер
+🚫 Мут на всём сервере от 1 дня до 3 дней
+
+2.3 Чрезмерное упоминание состава сервера
+🚫 Мут на всём сервере от 3 часов до 3 дней
+
+2.4 Распространение личных данных игроков, угрозы
+🚫 Бан навсегда
+
+2.5 Выдача себя за состав сервера в корыстных целях
+🚫 Бан от 7 дней до 30 дней
+
+2.6 Использование нарушающих никнеймов
+⚠️ Первое нарушение - предупреждение
+🚫 Повторное - Бан от 7 дней до 14 дней
+
+2.7 Обман администрации в корыстных целях
+🚫 Бан от 3 до 10 дней
+
+2.8 Введение администрации в заблуждение
+🚫 Мут на всём сервере от 2 до 10 дней
+
+🔧 МЕХАНИКА (Для модераторов и выше):
+
+3.1 Некорректная выдача наказаний
+⚠️ Предупреждение персоналу
+
+3.2 Некорректное снятие наказаний
+⚠️ 2 предупреждения персоналу
+
+⚖️ ВАЖНОЕ:
+
+• Незнание правил не освобождает от ответственности
+• Администрация вправе выдавать наказания на своё усмотрение
+• Администрация вправе изменять правила без оповещения
+• Администрация вправе отказать в доступе без объяснения причин
+
+🎯 При наружении правил принимаются меры вплоть до ограничения доступа!
+"""
+
+class Database:
+    def __init__(self, db_path="bot_database.db"):
+        self.db_path = db_path
+        self.init_database()
+
+    def init_database(self):
+        """Инициализация базы данных"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        # Таблица пользователей
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER UNIQUE,
+                username TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Таблица заявок
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS applications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                application_text TEXT,
+                status TEXT DEFAULT 'pending',
+                reviewed_by INTEGER,
+                reviewed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Таблица вопросов
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                question_text TEXT,
+                status TEXT DEFAULT 'unanswered',
+                reviewed_by INTEGER,
+                reviewed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Таблица заблокированных пользователей
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS banned_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER UNIQUE,
+                username TEXT,
+                reason TEXT,
+                banned_by INTEGER,
+                banned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Таблица логов действий
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS action_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                action TEXT,
+                details TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Таблица фидбека
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                feedback_text TEXT,
+                rating INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Таблица настроек бота
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+
+        conn.commit()
+        conn.close()
+        print("✅ База данных инициализирована")
+
+    def execute_query(self, query, params=(), fetch=False):
+        """Универсальный метод выполнения запросов"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+
+        if fetch:
+            result = cursor.fetchall()
+            columns = [description[0] for description in cursor.description]
+            result = [dict(zip(columns, row)) for row in result]
+        else:
+            result = None
+
+        conn.commit()
+        conn.close()
+        return result
+
+    def log_action(self, user_id, action, details=""):
+        """Логирование действий"""
+        self.execute_query(
+            "INSERT INTO action_logs (user_id, action, details) VALUES (?, ?, ?)",
+            (user_id, action, details)
+        )
+
+    def add_user(self, user_id, username, first_name, last_name):
+        """Добавление пользователя"""
+        self.execute_query(
+            "INSERT OR IGNORE INTO users (user_id, username, first_name, last_name) VALUES (?, ?, ?, ?)",
+            (user_id, username, first_name, last_name)
+        )
+
+    def add_application(self, user_id, application_text):
+        """Добавление заявки"""
+        self.execute_query(
+            "INSERT INTO applications (user_id, application_text) VALUES (?, ?)",
+            (user_id, application_text)
+        )
+
+    def add_question(self, user_id, question_text):
+        """Добавление вопроса"""
+        self.execute_query(
+            "INSERT INTO questions (user_id, question_text) VALUES (?, ?)",
+            (user_id, question_text)
+        )
+
+    def add_feedback(self, user_id, feedback_text, rating=None):
+        """Добавление фидбека"""
+        self.execute_query(
+            "INSERT INTO feedback (user_id, feedback_text, rating) VALUES (?, ?, ?)",
+            (user_id, feedback_text, rating)
+        )
+
+    def get_pending_applications(self):
+        """Получение ожидающих заявок"""
+        return self.execute_query(
+            "SELECT a.*, u.username, u.first_name, u.last_name, "
+            "ru.username as reviewer_username, ru.first_name as reviewer_first_name, ru.last_name as reviewer_last_name "
+            "FROM applications a "
+            "LEFT JOIN users u ON a.user_id = u.user_id "
+            "LEFT JOIN users ru ON a.reviewed_by = ru.user_id "
+            "WHERE a.status = 'pending' "
+            "ORDER BY a.created_at",
+            fetch=True
+        )
+
+    def get_unanswered_questions(self):
+        """Получение неотвеченных вопросов"""
+        return self.execute_query(
+            "SELECT q.*, u.username, u.first_name, u.last_name, "
+            "ru.username as reviewer_username, ru.first_name as reviewer_first_name, ru.last_name as reviewer_last_name "
+            "FROM questions q "
+            "LEFT JOIN users u ON q.user_id = u.user_id "
+            "LEFT JOIN users ru ON q.reviewed_by = ru.user_id "
+            "WHERE q.status = 'unanswered' "
+            "ORDER BY q.created_at",
+            fetch=True
+        )
+
+    def get_application(self, app_id):
+        """Получение заявки по ID"""
+        result = self.execute_query(
+            "SELECT a.*, u.username FROM applications a "
+            "LEFT JOIN users u ON a.user_id = u.user_id "
+            "WHERE a.id = ?",
+            (app_id,),
+            fetch=True
+        )
+        return result[0] if result else None
+
+    def get_question(self, question_id):
+        """Получение вопроса по ID"""
+        result = self.execute_query(
+            "SELECT q.*, u.username FROM questions q "
+            "LEFT JOIN users u ON q.user_id = u.user_id "
+            "WHERE q.id = ?",
+            (question_id,),
+            fetch=True
+        )
+        return result[0] if result else None
+
+    def get_admin_info(self, admin_id):
+        """Получение информации об администраторе"""
+        result = self.execute_query(
+            "SELECT username, first_name, last_name FROM users WHERE user_id = ?",
+            (admin_id,),
+            fetch=True
+        )
+        return result[0] if result else None
+
+    def update_application_status(self, app_id, status, reviewed_by=None):
+        """Обновление статуса заявки"""
+        if reviewed_by:
+            self.execute_query(
+                "UPDATE applications SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, reviewed_by, app_id)
+            )
+        else:
+            self.execute_query(
+                "UPDATE applications SET status = ? WHERE id = ?",
+                (status, app_id)
+            )
+
+    def update_question_status(self, question_id, status, reviewed_by=None):
+        """Обновление статуса вопроса"""
+        if reviewed_by:
+            self.execute_query(
+                "UPDATE questions SET status = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, reviewed_by, question_id)
+            )
+        else:
+            self.execute_query(
+                "UPDATE questions SET status = ? WHERE id = ?",
+                (status, question_id)
+            )
+
+    def start_review_application(self, app_id, reviewer_id):
+        """Начать рассмотрение заявки"""
+        self.execute_query(
+            "UPDATE applications SET reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (reviewer_id, app_id)
+        )
+
+    def start_review_question(self, question_id, reviewer_id):
+        """Начать рассмотрение вопроса"""
+        self.execute_query(
+            "UPDATE questions SET reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (reviewer_id, question_id)
+        )
+
+    def get_all_users(self, limit=50, offset=0, search_query=None):
+        """Получение всех пользователей с пагинацией и поиском"""
+        query = """
+            SELECT user_id, username, first_name, last_name, created_at 
+            FROM users 
+        """
+        params = []
+        
+        if search_query:
+            query += " WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ?"
+            search_term = f"%{search_query}%"
+            params = [search_term, search_term, search_term]
+        
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        return self.execute_query(query, params, fetch=True)
+
+    def get_users_count(self, search_query=None):
+        """Получение общего количества пользователей"""
+        query = "SELECT COUNT(*) as count FROM users"
+        params = []
+        
+        if search_query:
+            query += " WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ?"
+            search_term = f"%{search_query}%"
+            params = [search_term, search_term, search_term]
+        
+        result = self.execute_query(query, params, fetch=True)
+        return result[0]['count'] if result else 0
+
+    def get_recent_users(self, days=7):
+        """Получение новых пользователей за последние N дней"""
+        return self.execute_query(
+            "SELECT user_id, username, first_name, last_name, created_at FROM users WHERE created_at >= datetime('now', ?)",
+            (f'-{days} days',),
+            fetch=True
+        )
+
+    def get_user_stats(self, user_id):
+        """Получение статистики по пользователю"""
+        stats = {}
+        
+        # Количество заявок
+        result = self.execute_query(
+            "SELECT COUNT(*) as count FROM applications WHERE user_id = ?",
+            (user_id,),
+            fetch=True
+        )
+        stats['applications_count'] = result[0]['count'] if result else 0
+        
+        # Количество вопросов
+        result = self.execute_query(
+            "SELECT COUNT(*) as count FROM questions WHERE user_id = ?",
+            (user_id,),
+            fetch=True
+        )
+        stats['questions_count'] = result[0]['count'] if result else 0
+
+        # Количество фидбеков
+        result = self.execute_query(
+            "SELECT COUNT(*) as count FROM feedback WHERE user_id = ?",
+            (user_id,),
+            fetch=True
+        )
+        stats['feedback_count'] = result[0]['count'] if result else 0
+        
+        # Последняя активность
+        result = self.execute_query(
+            "SELECT MAX(created_at) as last_activity FROM ("
+            "SELECT created_at FROM applications WHERE user_id = ? "
+            "UNION ALL "
+            "SELECT created_at FROM questions WHERE user_id = ? "
+            "UNION ALL "
+            "SELECT created_at FROM feedback WHERE user_id = ?"
+            ")",
+            (user_id, user_id, user_id),
+            fetch=True
+        )
+        stats['last_activity'] = result[0]['last_activity'] if result else None
+        
+        return stats
+
+    def get_stats(self):
+        """Получение общей статистики"""
+        stats = {}
+
+        result = self.execute_query("SELECT COUNT(*) as count FROM users", fetch=True)
+        stats['total_users'] = result[0]['count'] if result else 0
+
+        result = self.execute_query("SELECT COUNT(*) as count FROM applications", fetch=True)
+        stats['total_applications'] = result[0]['count'] if result else 0
+
+        result = self.execute_query("SELECT COUNT(*) as count FROM questions", fetch=True)
+        stats['total_questions'] = result[0]['count'] if result else 0
+
+        result = self.execute_query("SELECT COUNT(*) as count FROM feedback", fetch=True)
+        stats['total_feedback'] = result[0]['count'] if result else 0
+
+        result = self.execute_query(
+            "SELECT COUNT(*) as count FROM applications WHERE status = 'pending'",
+            fetch=True
+        )
+        stats['pending_applications'] = result[0]['count'] if result else 0
+
+        result = self.execute_query(
+            "SELECT COUNT(*) as count FROM questions WHERE status = 'unanswered'",
+            fetch=True
+        )
+        stats['unanswered_questions'] = result[0]['count'] if result else 0
+
+        result = self.execute_query("SELECT COUNT(*) as count FROM banned_users", fetch=True)
+        stats['banned_users'] = result[0]['count'] if result else 0
+
+        # Статистика за сегодня
+        result = self.execute_query(
+            "SELECT COUNT(*) as count FROM users WHERE DATE(created_at) = DATE('now')",
+            fetch=True
+        )
+        stats['new_users_today'] = result[0]['count'] if result else 0
+
+        # Статистика за неделю
+        result = self.execute_query(
+            "SELECT COUNT(*) as count FROM users WHERE created_at >= datetime('now', '-7 days')",
+            fetch=True
+        )
+        stats['new_users_week'] = result[0]['count'] if result else 0
+
+        # Средний рейтинг фидбека
+        result = self.execute_query(
+            "SELECT AVG(rating) as avg_rating FROM feedback WHERE rating IS NOT NULL",
+            fetch=True
+        )
+        stats['avg_feedback_rating'] = round(result[0]['avg_rating'], 2) if result and result[0]['avg_rating'] else 0
+
+        return stats
+
+    def ban_user(self, user_id, username, reason, banned_by):
+        """Блокировка пользователя"""
+        self.execute_query(
+            "INSERT OR REPLACE INTO banned_users (user_id, username, reason, banned_by) VALUES (?, ?, ?, ?)",
+            (user_id, username, reason, banned_by)
+        )
+
+    def unban_user(self, user_id):
+        """Разблокировка пользователя"""
+        self.execute_query(
+            "DELETE FROM banned_users WHERE user_id = ?",
+            (user_id,)
+        )
+
+    def is_user_banned(self, user_id):
+        """Проверка заблокирован ли пользователь"""
+        result = self.execute_query(
+            "SELECT * FROM banned_users WHERE user_id = ?",
+            (user_id,),
+            fetch=True
+        )
+        return len(result) > 0
+
+    def get_banned_users(self):
+        """Получение списка заблокированных пользователей"""
+        return self.execute_query(
+            "SELECT bu.*, u.username as banned_by_username FROM banned_users bu "
+            "LEFT JOIN users u ON bu.banned_by = u.user_id "
+            "ORDER BY bu.banned_at DESC",
+            fetch=True
+        )
+
+    def get_user_by_username(self, username):
+        """Получение пользователя по username"""
+        result = self.execute_query(
+            "SELECT * FROM users WHERE username = ?",
+            (username.lstrip('@'),),
+            fetch=True
+        )
+        return result[0] if result else None
+
+    def get_user_by_id(self, user_id):
+        """Получение пользователя по ID"""
+        result = self.execute_query(
+            "SELECT * FROM users WHERE user_id = ?",
+            (user_id,),
+            fetch=True
+        )
+        return result[0] if result else None
+
+    def get_action_logs(self, limit=50):
+        """Получение логов действий"""
+        return self.execute_query(
+            "SELECT al.*, u.username, u.first_name, u.last_name FROM action_logs al "
+            "LEFT JOIN users u ON al.user_id = u.user_id "
+            "ORDER BY al.created_at DESC LIMIT ?",
+            (limit,),
+            fetch=True
+        )
+
+    def get_feedback(self, limit=20):
+        """Получение фидбека"""
+        return self.execute_query(
+            "SELECT f.*, u.username, u.first_name, u.last_name FROM feedback f "
+            "LEFT JOIN users u ON f.user_id = u.user_id "
+            "ORDER BY f.created_at DESC LIMIT ?",
+            (limit,),
+            fetch=True
+        )
+
+    def clear_old_data(self, days=30):
+        """Очистка старых данных"""
+        deleted_apps = self.execute_query(
+            "DELETE FROM applications WHERE created_at < datetime('now', ?) AND status != 'pending'",
+            (f'-{days} days',)
+        )
+        deleted_questions = self.execute_query(
+            "DELETE FROM questions WHERE created_at < datetime('now', ?) AND status != 'unanswered'",
+            (f'-{days} days',)
+        )
+        deleted_logs = self.execute_query(
+            "DELETE FROM action_logs WHERE created_at < datetime('now', ?)",
+            (f'-{days} days',)
+        )
+        return {
+            'deleted_applications': deleted_apps,
+            'deleted_questions': deleted_questions,
+            'deleted_logs': deleted_logs
+        }
+
+    def get_setting(self, key, default=None):
+        """Получение настройки"""
+        result = self.execute_query(
+            "SELECT value FROM bot_settings WHERE key = ?",
+            (key,),
+            fetch=True
+        )
+        return result[0]['value'] if result else default
+
+    def set_setting(self, key, value):
+        """Установка настройки"""
+        self.execute_query(
+            "INSERT OR REPLACE INTO bot_settings (key, value) VALUES (?, ?)",
+            (key, value)
+        )
+
+
+# Инициализация базы данных
+db = Database()
+
+
+class MinecraftBot:
+    def __init__(self):
+        self.application = None
+        self.maintenance_mode = False
+
+    def setup_handlers(self):
+        """Настройка обработчиков"""
+        conv_handler = ConversationHandler(
+            entry_points=[
+                MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
+            ],
+            states={
+                QUESTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_question)],
+                MODERATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_moderation)],
+                BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_broadcast)],
+                USER_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_user_search)],
+                FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_feedback)],
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel)]
+        )
+
+        # Основные команды
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("help", self.help_command))
+        self.application.add_handler(CommandHandler("menu", self.show_menu))
+        self.application.add_handler(CommandHandler("rules", self.show_rules))
+        self.application.add_handler(CommandHandler("ping", self.ping))
+        self.application.add_handler(CommandHandler("feedback", self.feedback))
+        self.application.add_handler(CommandHandler("status", self.bot_status))
+        self.application.add_handler(CommandHandler("id", self.get_user_id))
+        
+        # Команды администраторов
+        self.application.add_handler(CommandHandler("admin", self.admin_panel))
+        self.application.add_handler(CommandHandler("stats", self.stats))
+        self.application.add_handler(CommandHandler("addadmin", self.add_admin))
+        self.application.add_handler(CommandHandler("ban", self.ban_user_command))
+        self.application.add_handler(CommandHandler("unban", self.unban_user_command))
+        self.application.add_handler(CommandHandler("banned", self.show_banned_users))
+        self.application.add_handler(CommandHandler("admins", self.show_admins))
+        self.application.add_handler(CommandHandler("users", self.show_users))
+        self.application.add_handler(CommandHandler("finduser", self.find_user))
+        self.application.add_handler(CommandHandler("userinfo", self.user_info))
+        self.application.add_handler(CommandHandler("recentusers", self.recent_users))
+        self.application.add_handler(CommandHandler("broadcast", self.broadcast))
+        self.application.add_handler(CommandHandler("logs", self.show_logs))
+        self.application.add_handler(CommandHandler("cleanup", self.cleanup_data))
+        self.application.add_handler(CommandHandler("export", self.export_data))
+        self.application.add_handler(CommandHandler("maintenance", self.maintenance_mode_command))
+        self.application.add_handler(CommandHandler("feedback_list", self.show_feedback))
+        self.application.add_handler(CommandHandler("notify", self.notify_user))
+        self.application.add_handler(CommandHandler("backup", self.backup_database))
+        
+        self.application.add_handler(CallbackQueryHandler(self.button_handler))
+        self.application.add_handler(conv_handler)
+
+    def main_keyboard(self, user_id):
+        """Основная клавиатура с учетом прав администратора"""
+        if user_id in ADMIN_IDS:
+            # Клавиатура для администраторов
+            keyboard = [
+                [KeyboardButton("❓ Вопрос"), KeyboardButton("📝 Набор в модерацию")],
+                [KeyboardButton("📜 Правила клана"), KeyboardButton("👑 Панель администратора")],
+                [KeyboardButton("💬 Обратная связь"), KeyboardButton("ℹ️ О боте")]
+            ]
+        else:
+            # Клавиатура для обычных пользователей
+            keyboard = [
+                [KeyboardButton("❓ Вопрос"), KeyboardButton("📝 Набор в модерацию")],
+                [KeyboardButton("📜 Правила клана"), KeyboardButton("💬 Обратная связь")],
+                [KeyboardButton("ℹ️ О боте")]
+            ]
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+    def admin_keyboard(self):
+        """Клавиатура админ-панели"""
+        keyboard = [
+            [InlineKeyboardButton("📋 Заявки", callback_data="admin_applications")],
+            [InlineKeyboardButton("❓ Вопросы", callback_data="admin_questions")],
+            [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+            [InlineKeyboardButton("🚫 Заблокированные", callback_data="admin_banned")],
+            [InlineKeyboardButton("👥 Все пользователи", callback_data="admin_users")],
+            [InlineKeyboardButton("🔍 Поиск пользователя", callback_data="admin_search_user")],
+            [InlineKeyboardButton("🆕 Новые пользователи", callback_data="admin_recent_users")],
+            [InlineKeyboardButton("💬 Фидбек", callback_data="admin_feedback")],
+            [InlineKeyboardButton("📝 Логи действий", callback_data="admin_logs")],
+            [InlineKeyboardButton("⚙️ Настройки", callback_data="admin_settings")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    def settings_keyboard(self):
+        """Клавиатура настроек"""
+        maintenance_status = "🟢 Выкл" if not self.maintenance_mode else "🔴 Вкл"
+        keyboard = [
+            [InlineKeyboardButton(f"🔧 Режим обслуживания: {maintenance_status}", callback_data="toggle_maintenance")],
+            [InlineKeyboardButton("🗃️ Экспорт данных", callback_data="export_data")],
+            [InlineKeyboardButton("🧹 Очистка данных", callback_data="cleanup_data")],
+            [InlineKeyboardButton("💾 Бэкап БД", callback_data="backup_db")],
+            [InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_back")]
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    def feedback_keyboard(self):
+        """Клавиатура для фидбека"""
+        keyboard = [
+            [InlineKeyboardButton("⭐ 1", callback_data="feedback_1"),
+             InlineKeyboardButton("⭐ 2", callback_data="feedback_2"),
+             InlineKeyboardButton("⭐ 3", callback_data="feedback_3")],
+            [InlineKeyboardButton("⭐ 4", callback_data="feedback_4"),
+             InlineKeyboardButton("⭐ 5", callback_data="feedback_5")],
+            [InlineKeyboardButton("💬 Только текст", callback_data="feedback_text")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="feedback_cancel")]
+        ]
+        return InlineKeyboardMarkup(keyboard)
+
+    def users_keyboard(self, page=0, total_pages=1, search_query=None):
+        """Клавиатура для навигации по пользователям"""
+        keyboard = []
+        
+        # Кнопки навигации
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"users_page_{page-1}_{search_query or ''}"))
+        
+        nav_buttons.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="users_info"))
+        
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton("Вперед ➡️", callback_data=f"users_page_{page+1}_{search_query or ''}"))
+        
+        if nav_buttons:
+            keyboard.append(nav_buttons)
+        
+        # Дополнительные кнопки
+        keyboard.extend([
+            [InlineKeyboardButton("🔄 Обновить", callback_data="admin_users")],
+            [InlineKeyboardButton("🔍 Поиск", callback_data="admin_search_user")],
+            [InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_back")]
+        ])
+        
+        return InlineKeyboardMarkup(keyboard)
+
+    def cancel_keyboard(self):
+        """Клавиатура для отмены действия"""
+        keyboard = [[KeyboardButton("❌ Отменить")]]
+        return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+    def format_admin_name(self, admin_id, admin_info=None):
+        """Форматирование имени администратора с учетом специальных ID"""
+        # Проверяем специальные ID
+        if admin_id in ADMIN_USERNAME_MAP:
+            return ADMIN_USERNAME_MAP[admin_id]
+
+        # Если нет специального отображения, используем информацию из базы
+        if not admin_info:
+            admin_info = db.get_admin_info(admin_id)
+
+        if not admin_info:
+            return f"Администратор (ID: {admin_id})"
+
+        username = admin_info.get('username')
+        first_name = admin_info.get('first_name')
+        last_name = admin_info.get('last_name')
+
+        if username:
+            return f"@{username}"
+        elif first_name and last_name:
+            return f"{first_name} {last_name}"
+        elif first_name:
+            return first_name
+        else:
+            return f"Администратор (ID: {admin_id})"
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.message.from_user
+
+        # Проверяем режим обслуживания
+        if self.maintenance_mode and user.id not in ADMIN_IDS:
+            await update.message.reply_text(
+                "🔴 Бот временно находится в режиме обслуживания. "
+                "Пожалуйста, попробуйте позже.\n\n"
+                "Приносим извинения за неудобства!"
+            )
+            return
+
+        # Проверяем заблокирован ли пользователь
+        if db.is_user_banned(user.id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return
+
+        db.add_user(user.id, user.username, user.first_name, user.last_name)
+        db.log_action(user.id, "start", "Пользователь запустил бота")
+
+        welcome_text = (
+            "🎮 Добро пожаловать в бот клана Minecraft dyO!\n\n"
+            "Здесь вы можете:\n"
+            "• 📝 Подать заявку в модерацию\n"
+            "• ❓ Задать вопрос администрации\n" 
+            "• 📜 Ознакомиться с правилами клана\n"
+            "• 💬 Оставить отзыв о работе бота\n\n"
+            "Выберите опцию ниже 👇"
+        )
+
+        if user.id in ADMIN_IDS:
+            welcome_text += "\n\n👑 У вас есть права администратора!"
+
+        await update.message.reply_text(
+            welcome_text,
+            reply_markup=self.main_keyboard(user.id)
+        )
+
+    async def show_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать главное меню"""
+        user_id = update.message.from_user.id
+        
+        if db.is_user_banned(user_id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return
+
+        await update.message.reply_text(
+            "🏠 Главное меню бота клана Minecraft dyO",
+            reply_markup=self.main_keyboard(user_id)
+        )
+
+    async def show_rules(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать правила клана"""
+        user_id = update.message.from_user.id
+
+        # Проверяем заблокирован ли пользователь
+        if db.is_user_banned(user_id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return
+
+        # Разбиваем правила на части, если они слишком длинные для одного сообщения
+        if len(CLAN_RULES) > 4000:
+            rules_parts = [CLAN_RULES[i:i + 4000] for i in range(0, len(CLAN_RULES), 4000)]
+            for i, part in enumerate(rules_parts):
+                if i == 0:
+                    await update.message.reply_text(part)
+                else:
+                    await update.message.reply_text(part)
+        else:
+            await update.message.reply_text(CLAN_RULES)
+
+        await update.message.reply_text(
+            "Выберите дальнейшее действие:",
+            reply_markup=self.main_keyboard(user_id)
+        )
+
+    async def admin_panel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.message.from_user.id
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        await update.message.reply_text(
+            "👑 Панель администратора:",
+            reply_markup=self.admin_keyboard()
+        )
+
+    async def stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.message.from_user.id
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        stats = db.get_stats()
+        await update.message.reply_text(
+            f"📊 Статистика бота:\n"
+            f"👥 Пользователей: {stats['total_users']}\n"
+            f"📝 Заявок: {stats['total_applications']}\n"
+            f"❓ Вопросов: {stats['total_questions']}\n"
+            f"💬 Отзывов: {stats['total_feedback']}\n"
+            f"⏳ Новых заявок: {stats['pending_applications']}\n"
+            f"⏳ Новых вопросов: {stats['unanswered_questions']}\n"
+            f"🚫 Заблокированных: {stats['banned_users']}\n"
+            f"🆕 Новых сегодня: {stats['new_users_today']}\n"
+            f"📈 Новых за неделю: {stats['new_users_week']}\n"
+            f"⭐ Средний рейтинг: {stats['avg_feedback_rating']}/5"
+        )
+
+    async def add_admin(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда для добавления администратора"""
+        user_id = update.message.from_user.id
+
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав для этой команды.")
+            return
+
+        if not context.args:
+            await update.message.reply_text("Использование: /addadmin <user_id>")
+            return
+
+        try:
+            new_admin_id = int(context.args[0])
+            if new_admin_id not in ADMIN_IDS:
+                ADMIN_IDS.append(new_admin_id)
+                await update.message.reply_text(f"✅ Пользователь {new_admin_id} добавлен в администраторы.")
+                db.log_action(user_id, "add_admin", f"Добавлен админ: {new_admin_id}")
+            else:
+                await update.message.reply_text("❌ Этот пользователь уже администратор.")
+        except ValueError:
+            await update.message.reply_text("❌ Неверный ID пользователя.")
+
+    async def ban_user_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда для блокировки пользователя"""
+        user_id = update.message.from_user.id
+
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав для этой команды.")
+            return
+
+        if not context.args or len(context.args) < 2:
+            await update.message.reply_text("Использование: /ban @username причина_блокировки")
+            return
+
+        username = context.args[0]
+        reason = ' '.join(context.args[1:])
+
+        # Получаем информацию о пользователе
+        user_info = db.get_user_by_username(username)
+        if not user_info:
+            await update.message.reply_text("❌ Пользователь с таким username не найден.")
+            return
+
+        # Блокируем пользователя
+        db.ban_user(user_info['user_id'], user_info['username'], reason, user_id)
+        db.log_action(user_id, "ban_user", f"Заблокирован: @{username}, причина: {reason}")
+
+        admin_name = self.format_admin_name(user_id)
+        await update.message.reply_text(
+            f"✅ Пользователь @{user_info['username']} (ID: {user_info['user_id']}) заблокирован.\n"
+            f"👮‍♂️ Заблокировал: {admin_name}\n"
+            f"📝 Причина: {reason}"
+        )
+
+        # Уведомляем всех админов
+        for admin_id in ADMIN_IDS:
+            if admin_id != user_id:
+                try:
+                    await self.application.bot.send_message(
+                        admin_id,
+                        f"🚫 Пользователь @{user_info['username']} заблокирован администратором {admin_name}\n"
+                        f"📝 Причина: {reason}"
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
+
+    async def unban_user_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Команда для разблокировки пользователя"""
+        user_id = update.message.from_user.id
+
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав для этой команды.")
+            return
+
+        if not context.args:
+            await update.message.reply_text("Использование: /unban @username")
+            return
+
+        username = context.args[0]
+
+        # Получаем информацию о пользователе
+        user_info = db.get_user_by_username(username)
+        if not user_info:
+            await update.message.reply_text("❌ Пользователь с таким username не найден.")
+            return
+
+        # Проверяем заблокирован ли пользователь
+        if not db.is_user_banned(user_info['user_id']):
+            await update.message.reply_text("❌ Этот пользователь не заблокирован.")
+            return
+
+        # Разблокируем пользователя
+        db.unban_user(user_info['user_id'])
+        db.log_action(user_id, "unban_user", f"Разблокирован: @{username}")
+
+        admin_name = self.format_admin_name(user_id)
+        await update.message.reply_text(
+            f"✅ Пользователь @{user_info['username']} (ID: {user_info['user_id']}) разблокирован.\n"
+            f"👮‍♂️ Разблокировал: {admin_name}"
+        )
+
+    async def show_banned_users(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать список заблокированных пользователей"""
+        user_id = update.message.from_user.id
+
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        banned_users = db.get_banned_users()
+        if not banned_users:
+            await update.message.reply_text("✅ Нет заблокированных пользователей.")
+            return
+
+        banned_list = "🚫 ЗАБЛОКИРОВАННЫЕ ПОЛЬЗОВАТЕЛИ:\n\n"
+        for banned in banned_users:
+            banned_by = f"@{banned['banned_by_username']}" if banned['banned_by_username'] else f"ID: {banned['banned_by']}"
+            banned_list += (
+                f"👤 Пользователь: @{banned['username']} (ID: {banned['user_id']})\n"
+                f"📝 Причина: {banned['reason']}\n"
+                f"👮‍♂️ Заблокировал: {banned_by}\n"
+                f"📅 Дата: {banned['banned_at']}\n"
+                f"────────────────────\n"
+            )
+
+        await update.message.reply_text(banned_list)
+
+    async def show_admins(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать список администраторов"""
+        user_id = update.message.from_user.id
+        
+        # Проверяем права администратора
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        # Создаем красивый список администраторов
+        admin_list = "👑 СПИСОК АДМИНИСТРАТОРОВ:\n\n"
+        
+        for i, admin_id in enumerate(ADMIN_IDS, 1):
+            # Получаем информацию об администраторе из базы
+            admin_info = db.get_admin_info(admin_id)
+            
+            # Используем специальное отображение если есть
+            if admin_id in ADMIN_USERNAME_MAP:
+                admin_display = ADMIN_USERNAME_MAP[admin_id]
+            elif admin_info:
+                username = admin_info.get('username')
+                first_name = admin_info.get('first_name', '')
+                last_name = admin_info.get('last_name', '')
+                
+                if username:
+                    admin_display = f"@{username}"
+                elif first_name or last_name:
+                    admin_display = f"{first_name} {last_name}".strip()
+                else:
+                    admin_display = f"ID: {admin_id}"
+            else:
+                admin_display = f"ID: {admin_id}"
+            
+            # Добавляем отметку для текущего пользователя
+            current_marker = " 👈 Вы" if admin_id == user_id else ""
+            
+            admin_list += f"{i}. {admin_display} (ID: {admin_id}){current_marker}\n"
+
+        admin_list += f"\n📊 Всего администраторов: {len(ADMIN_IDS)}"
+        
+        await update.message.reply_text(admin_list)
+
+    async def show_users(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать список всех пользователей"""
+        user_id = update.message.from_user.id
+        
+        # Проверяем права администратора
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        await self.send_users_page(update, context, page=0)
+
+    async def send_users_page(self, update, context, page=0, search_query=None):
+        """Отправить страницу с пользователями"""
+        limit = 10
+        offset = page * limit
+        
+        users = db.get_all_users(limit=limit, offset=offset, search_query=search_query)
+        total_users = db.get_users_count(search_query)
+        total_pages = (total_users + limit - 1) // limit
+
+        if not users:
+            message = "❌ Пользователи не найдены."
+            if search_query:
+                message = f"❌ Пользователи по запросу '{search_query}' не найдены."
+            if isinstance(update, Update):
+                await update.message.reply_text(message)
+            else:
+                await update.edit_message_text(message)
+            return
+
+        # Формируем сообщение
+        if search_query:
+            message = f"👥 ПОЛЬЗОВАТЕЛИ (поиск: '{search_query}')\n\n"
+        else:
+            message = "👥 ВСЕ ПОЛЬЗОВАТЕЛИ БОТА\n\n"
+
+        for i, user in enumerate(users, start=1):
+            user_num = offset + i
+            username = f"@{user['username']}" if user['username'] else "без username"
+            full_name = f"{user['first_name'] or ''} {user['last_name'] or ''}".strip()
+            created_date = user['created_at'].split()[0] if user['created_at'] else "неизвестно"
+            
+            message += f"{user_num}. {full_name} ({username})\n"
+            message += f"   🆔: {user['user_id']}\n"
+            message += f"   📅: {created_date}\n"
+            
+            # Добавляем статистику пользователя
+            user_stats = db.get_user_stats(user['user_id'])
+            if user_stats['applications_count'] > 0 or user_stats['questions_count'] > 0:
+                message += f"   📊 Заявок: {user_stats['applications_count']}, Вопросов: {user_stats['questions_count']}\n"
+            
+            message += "\n"
+
+        message += f"📊 Всего пользователей: {total_users}"
+        if total_pages > 1:
+            message += f" (Страница {page + 1} из {total_pages})"
+
+        # Отправляем сообщение с клавиатурой навигации
+        if isinstance(update, Update):
+            await update.message.reply_text(
+                message,
+                reply_markup=self.users_keyboard(page, total_pages, search_query)
+            )
+        else:
+            # Если это callback query
+            await update.edit_message_text(
+                message,
+                reply_markup=self.users_keyboard(page, total_pages, search_query)
+            )
+
+    async def find_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Поиск пользователя"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        if not context.args:
+            await update.message.reply_text(
+                "🔍 Введите username, имя или фамилию пользователя для поиска:\n\n"
+                "Или нажмите '❌ Отменить' для возврата.",
+                reply_markup=self.cancel_keyboard()
+            )
+            context.user_data['searching_user'] = True
+            return USER_SEARCH
+
+        search_query = ' '.join(context.args)
+        await self.send_users_page(update, context, page=0, search_query=search_query)
+
+    async def receive_user_search(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обработка поискового запроса пользователя"""
+        user_id = update.message.from_user.id
+        search_query = update.message.text
+
+        # Проверяем отмену
+        if search_query == "❌ Отменить":
+            await update.message.reply_text(
+                "❌ Поиск отменен.",
+                reply_markup=self.main_keyboard(user_id)
+            )
+            context.user_data.pop('searching_user', None)
+            return ConversationHandler.END
+
+        await self.send_users_page(update, context, page=0, search_query=search_query)
+        context.user_data.pop('searching_user', None)
+        return ConversationHandler.END
+
+    async def recent_users(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать новых пользователей"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        days = 7
+        if context.args:
+            try:
+                days = int(context.args[0])
+            except ValueError:
+                pass
+
+        users = db.get_recent_users(days=days)
+        
+        if not users:
+            await update.message.reply_text(f"❌ Новых пользователей за последние {days} дней не найдено.")
+            return
+
+        message = f"🆕 НОВЫЕ ПОЛЬЗОВАТЕЛИ (за последние {days} дней)\n\n"
+        
+        for i, user in enumerate(users, start=1):
+            username = f"@{user['username']}" if user['username'] else "без username"
+            full_name = f"{user['first_name'] or ''} {user['last_name'] or ''}".strip()
+            created_date = user['created_at'].split()[0] if user['created_at'] else "неизвестно"
+            
+            message += f"{i}. {full_name} ({username})\n"
+            message += f"   🆔: {user['user_id']}\n"
+            message += f"   📅: {created_date}\n\n"
+
+        message += f"📊 Всего новых пользователей: {len(users)}"
+
+        await update.message.reply_text(message)
+
+    async def user_info(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Информация о конкретном пользователе"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        if not context.args:
+            await update.message.reply_text("Использование: /userinfo <user_id> или /userinfo @username")
+            return
+
+        target = context.args[0]
+        
+        try:
+            # Пробуем найти по ID
+            target_id = int(target)
+            user_info = db.get_user_by_id(target_id)
+        except ValueError:
+            # Ищем по username
+            user_info = db.get_user_by_username(target)
+
+        if not user_info:
+            await update.message.reply_text("❌ Пользователь не найден.")
+            return
+
+        # Получаем статистику пользователя
+        user_stats = db.get_user_stats(user_info['user_id'])
+        is_banned = db.is_user_banned(user_info['user_id'])
+
+        message = "👤 ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ\n\n"
+        message += f"🆔 ID: {user_info['user_id']}\n"
+        
+        if user_info['username']:
+            message += f"📱 Username: @{user_info['username']}\n"
+        
+        if user_info['first_name']:
+            message += f"👤 Имя: {user_info['first_name']}\n"
+        
+        if user_info['last_name']:
+            message += f"📛 Фамилия: {user_info['last_name']}\n"
+        
+        message += f"📅 Дата регистрации: {user_info['created_at']}\n\n"
+        
+        message += "📊 СТАТИСТИКА:\n"
+        message += f"   📝 Заявок подано: {user_stats['applications_count']}\n"
+        message += f"   ❓ Вопросов задано: {user_stats['questions_count']}\n"
+        message += f"   💬 Отзывов оставлено: {user_stats['feedback_count']}\n"
+        
+        if user_stats['last_activity']:
+            message += f"   ⏰ Последняя активность: {user_stats['last_activity']}\n"
+        
+        message += f"   🚫 Статус: {'ЗАБЛОКИРОВАН' if is_banned else 'Активен'}\n"
+
+        # Кнопки действий
+        keyboard = []
+        if not is_banned:
+            keyboard.append([InlineKeyboardButton("🚫 Заблокировать", callback_data=f"ban_user_{user_info['user_id']}")])
+        else:
+            keyboard.append([InlineKeyboardButton("✅ Разблокировать", callback_data=f"unban_user_{user_info['user_id']}")])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_back")])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(message, reply_markup=reply_markup)
+
+    async def ping(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Проверка работоспособности бота"""
+        start_time = datetime.now()
+        message = await update.message.reply_text("🏓 Понг...")
+        end_time = datetime.now()
+        ping_time = (end_time - start_time).total_seconds() * 1000
+        
+        await message.edit_text(f"🏓 Понг! Задержка: {ping_time:.2f} мс")
+
+    async def feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обратная связь о работе бота"""
+        user_id = update.message.from_user.id
+        
+        if db.is_user_banned(user_id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return
+
+        await update.message.reply_text(
+            "💬 Пожалуйста, оставьте ваш отзыв о работе бота.\n"
+            "Вы можете оценить бота от 1 до 5 звезд или просто написать текст.\n\n"
+            "Или нажмите '❌ Отмена' для возврата.",
+            reply_markup=self.feedback_keyboard()
+        )
+        return FEEDBACK
+
+    async def receive_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Получение фидбека от пользователя"""
+        user = update.message.from_user
+        text = update.message.text
+
+        if text == "❌ Отменить":
+            await update.message.reply_text(
+                "❌ Отправка отзыва отменена.",
+                reply_markup=self.main_keyboard(user.id)
+            )
+            return ConversationHandler.END
+
+        # Проверяем, есть ли рейтинг в context.user_data
+        rating = context.user_data.get('feedback_rating')
+        
+        # Сохраняем фидбек
+        db.add_feedback(user.id, text, rating)
+        db.log_action(user.id, "feedback", f"Рейтинг: {rating}, Текст: {text[:50]}...")
+
+        # Очищаем временные данные
+        context.user_data.pop('feedback_rating', None)
+        context.user_data.pop('feedback_mode', None)
+
+        thank_you_msg = "✅ Спасибо за ваш отзыв! Мы ценим ваше мнение и учтем его для улучшения бота."
+        if rating:
+            thank_you_msg = f"✅ Спасибо за оценку {rating}⭐ и отзыв! Мы ценим ваше мнение."
+
+        await update.message.reply_text(
+            thank_you_msg,
+            reply_markup=self.main_keyboard(user.id)
+        )
+
+        # Уведомляем админов о новом фидбеке
+        rating_text = f"Рейтинг: {rating}⭐" if rating else "Только текст"
+        for admin_id in ADMIN_IDS:
+            try:
+                await self.application.bot.send_message(
+                    admin_id,
+                    f"💬 Новый отзыв от @{user.username} ({rating_text}):\n\n{text}"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
+
+        return ConversationHandler.END
+
+    async def bot_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Статус бота и статистика"""
+        user_id = update.message.from_user.id
+        stats = db.get_stats()
+
+        status_text = "🤖 СТАТУС БОТА\n\n"
+        status_text += f"🟢 Статус: {'В работе' if not self.maintenance_mode else '🔴 Режим обслуживания'}\n"
+        status_text += f"👥 Пользователей: {stats['total_users']}\n"
+        status_text += f"📝 Заявок всего: {stats['total_applications']}\n"
+        status_text += f"❓ Вопросов всего: {stats['total_questions']}\n"
+        status_text += f"💬 Отзывов: {stats['total_feedback']}\n"
+        
+        if stats['avg_feedback_rating'] > 0:
+            status_text += f"⭐ Средний рейтинг: {stats['avg_feedback_rating']}/5\n"
+        
+        status_text += f"\n📊 За сегодня:\n"
+        status_text += f"   👥 Новых пользователей: {stats['new_users_today']}\n"
+        status_text += f"   📝 Новых заявок: {stats['pending_applications']}\n"
+        status_text += f"   ❓ Новых вопросов: {stats['unanswered_questions']}"
+
+        await update.message.reply_text(status_text)
+
+    async def get_user_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Получить свой ID"""
+        user = update.message.from_user
+        await update.message.reply_text(
+            f"🆔 Ваш ID: `{user.id}`\n"
+            f"📱 Username: @{user.username or 'не установлен'}\n"
+            f"👤 Имя: {user.first_name or 'не указано'}\n"
+            f"📛 Фамилия: {user.last_name or 'не указана'}",
+            parse_mode='Markdown'
+        )
+
+    async def maintenance_mode_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Включить/выключить режим обслуживания"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        if not context.args:
+            status = "включен" if self.maintenance_mode else "выключен"
+            await update.message.reply_text(f"🔧 Режим обслуживания: {status}")
+            return
+
+        action = context.args[0].lower()
+        if action in ["on", "вкл", "enable"]:
+            self.maintenance_mode = True
+            await update.message.reply_text("🔴 Режим обслуживания ВКЛЮЧЕН. Бот временно недоступен для пользователей.")
+            db.log_action(user_id, "maintenance", "Режим обслуживания включен")
+        elif action in ["off", "выкл", "disable"]:
+            self.maintenance_mode = False
+            await update.message.reply_text("🟢 Режим обслуживания ВЫКЛЮЧЕН. Бот снова доступен.")
+            db.log_action(user_id, "maintenance", "Режим обслуживания выключен")
+        else:
+            await update.message.reply_text("❌ Использование: /maintenance on/off")
+
+    async def show_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать отзывы пользователей"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        feedback_list = db.get_feedback(limit=20)
+        
+        if not feedback_list:
+            await update.message.reply_text("💬 Пока нет отзывов от пользователей.")
+            return
+
+        message = "💬 ПОСЛЕДНИЕ ОТЗЫВЫ ПОЛЬЗОВАТЕЛЕЙ\n\n"
+        
+        for i, feedback in enumerate(feedback_list, 1):
+            username = f"@{feedback['username']}" if feedback['username'] else "без username"
+            full_name = f"{feedback['first_name'] or ''} {feedback['last_name'] or ''}".strip()
+            rating = "⭐" * feedback['rating'] if feedback['rating'] else "📝 Только текст"
+            date = feedback['created_at'].split()[0]
+            
+            message += f"{i}. {full_name} ({username})\n"
+            message += f"   {rating}\n"
+            message += f"   💬 {feedback['feedback_text'][:100]}{'...' if len(feedback['feedback_text']) > 100 else ''}\n"
+            message += f"   📅 {date}\n\n"
+
+        await update.message.reply_text(message)
+
+    async def notify_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Отправить уведомление конкретному пользователю"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        if len(context.args) < 2:
+            await update.message.reply_text("❌ Использование: /notify @username текст_сообщения")
+            return
+
+        target_username = context.args[0]
+        message_text = ' '.join(context.args[1:])
+
+        user_info = db.get_user_by_username(target_username)
+        if not user_info:
+            await update.message.reply_text("❌ Пользователь с таким username не найден.")
+            return
+
+        try:
+            await self.application.bot.send_message(
+                user_info['user_id'],
+                f"📢 Уведомление от администрации:\n\n{message_text}"
+            )
+            await update.message.reply_text(f"✅ Уведомление отправлено пользователю @{target_username}")
+            db.log_action(user_id, "notify_user", f"Пользователь: {target_username}, Сообщение: {message_text[:50]}...")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка отправки уведомления: {e}")
+
+    async def backup_database(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Создать backup базы данных"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        try:
+            # Создаем backup
+            backup_filename = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            shutil.copy2("bot_database.db", backup_filename)
+            
+            await update.message.reply_text(f"✅ Backup базы данных создан: `{backup_filename}`", parse_mode='Markdown')
+            db.log_action(user_id, "backup", f"Файл: {backup_filename}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка создания backup: {e}")
+
+    async def export_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Экспорт данных в CSV"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        try:
+            # Экспорт пользователей
+            users = db.get_all_users(limit=1000)  # Большой лимит для экспорта
+            if users:
+                output = io.StringIO()
+                writer = csv.writer(output)
+                writer.writerow(['ID', 'Username', 'First Name', 'Last Name', 'Created At'])
+                for user in users:
+                    writer.writerow([
+                        user['user_id'],
+                        user['username'] or '',
+                        user['first_name'] or '',
+                        user['last_name'] or '',
+                        user['created_at']
+                    ])
+                
+                # Отправляем файл
+                bio = io.BytesIO(output.getvalue().encode('utf-8'))
+                bio.name = f"users_export_{datetime.now().strftime('%Y%m%d')}.csv"
+                await update.message.reply_document(bio, caption="📊 Экспорт пользователей")
+            
+            db.log_action(user_id, "export_data", "CSV экспорт пользователей")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка экспорта данных: {e}")
+
+    async def cleanup_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Очистка старых данных"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        days = 30
+        if context.args:
+            try:
+                days = int(context.args[0])
+            except ValueError:
+                pass
+
+        result = db.clear_old_data(days=days)
+        
+        message = f"🧹 ОЧИСТКА ДАННЫХ (старше {days} дней)\n\n"
+        message += f"📝 Удалено заявок: {result['deleted_applications'] or 0}\n"
+        message += f"❓ Удалено вопросов: {result['deleted_questions'] or 0}\n"
+        message += f"📋 Удалено логов: {result['deleted_logs'] or 0}"
+        
+        await update.message.reply_text(message)
+        db.log_action(user_id, "cleanup_data", f"Дней: {days}")
+
+    async def show_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать логи действий"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        logs = db.get_action_logs(limit=20)
+        
+        if not logs:
+            await update.message.reply_text("📝 Логи действий отсутствуют.")
+            return
+
+        message = "📝 ПОСЛЕДНИЕ ДЕЙСТВИЯ\n\n"
+        
+        for log in logs:
+            username = f"@{log['username']}" if log['username'] else f"ID:{log['user_id']}"
+            time = log['created_at'].split()[1][:5]  # только время
+            message += f"🕒 {time} | {username} | {log['action']}"
+            if log['details']:
+                message += f" | {log['details'][:30]}..."
+            message += "\n"
+
+        await update.message.reply_text(message)
+
+    async def broadcast(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Рассылка сообщения всем пользователям"""
+        user_id = update.message.from_user.id
+        
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        if not context.args:
+            await update.message.reply_text(
+                "📢 Введите сообщение для рассылки всем пользователям:\n\n"
+                "Или нажмите '❌ Отменить' для возврата.",
+                reply_markup=self.cancel_keyboard()
+            )
+            return BROADCAST
+
+        message_text = ' '.join(context.args)
+        await self.send_broadcast(update, context, message_text)
+
+    async def receive_broadcast(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Получение сообщения для рассылки"""
+        user_id = update.message.from_user.id
+        text = update.message.text
+
+        if text == "❌ Отменить":
+            await update.message.reply_text(
+                "❌ Рассылка отменена.",
+                reply_markup=self.main_keyboard(user_id)
+            )
+            return ConversationHandler.END
+
+        await self.send_broadcast(update, context, text)
+        return ConversationHandler.END
+
+    async def send_broadcast(self, update: Update, context: ContextTypes.DEFAULT_TYPE, message_text: str):
+        """Отправка рассылки"""
+        users = db.get_all_users()
+        success_count = 0
+        fail_count = 0
+
+        progress_msg = await update.message.reply_text(f"📢 Рассылка начата... 0/{len(users)}")
+
+        for i, user in enumerate(users):
+            try:
+                await self.application.bot.send_message(
+                    user['user_id'],
+                    f"📢 ОБЪЯВЛЕНИЕ ОТ АДМИНИСТРАЦИИ:\n\n{message_text}"
+                )
+                success_count += 1
+                
+                # Обновляем прогресс каждые 10 сообщений
+                if i % 10 == 0:
+                    await progress_msg.edit_text(f"📢 Рассылка... {i}/{len(users)}")
+                
+                # Небольшая задержка чтобы не превысить лимиты Telegram
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                fail_count += 1
+                logger.error(f"Ошибка отправки пользователю {user['user_id']}: {e}")
+
+        await progress_msg.edit_text(
+            f"✅ Рассылка завершена!\n"
+            f"✅ Успешно: {success_count}\n"
+            f"❌ Не удалось: {fail_count}"
+        )
+
+        db.log_action(update.message.from_user.id, "broadcast", f"Сообщение: {message_text[:50]}..., Успешно: {success_count}")
+
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Расширенная справка по командам"""
+        user_id = update.message.from_user.id
+        
+        help_text = "🤖 СПРАВКА ПО КОМАНДАМ БОТА\n\n"
+        
+        # Общие команды
+        help_text += "🔄 ОСНОВНЫЕ КОМАНДЫ:\n"
+        help_text += "/start - Запустить бота\n"
+        help_text += "/menu - Главное меню\n"
+        help_text += "/help - Показать эту справку\n"
+        help_text += "/rules - Показать правила клана\n"
+        help_text += "/ping - Проверить работоспособность бота\n"
+        help_text += "/status - Статус бота и статистика\n"
+        help_text += "/id - Показать ваш ID\n"
+        help_text += "/feedback - Оставить отзыв о боте\n\n"
+        
+        # Команды администраторов
+        if user_id in ADMIN_IDS:
+            help_text += "👑 КОМАНДЫ АДМИНИСТРАТОРА:\n"
+            help_text += "/admin - Панель администратора\n"
+            help_text += "/stats - Статистика бота\n"
+            help_text += "/admins - Список администраторов\n"
+            help_text += "/users - Список всех пользователей\n"
+            help_text += "/finduser - Поиск пользователя\n"
+            help_text += "/recentusers - Новые пользователи\n"
+            help_text += "/userinfo - Информация о пользователе\n"
+            help_text += "/ban - Заблокировать пользователя\n"
+            help_text += "/unban - Разблокировать пользователя\n"
+            help_text += "/banned - Список заблокированных\n"
+            help_text += "/addadmin - Добавить администратора\n"
+            help_text += "/broadcast - Рассылка сообщений\n"
+            help_text += "/notify - Уведомить пользователя\n"
+            help_text += "/logs - Логи действий\n"
+            help_text += "/feedback_list - Список отзывов\n"
+            help_text += "/maintenance - Режим обслуживания\n"
+            help_text += "/cleanup - Очистка старых данных\n"
+            help_text += "/export - Экспорт данных\n"
+            help_text += "/backup - Backup базы данных\n"
+
+        await update.message.reply_text(help_text)
+
+    async def question(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.message.from_user
+
+        # Проверяем заблокирован ли пользователь
+        if db.is_user_banned(user.id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return ConversationHandler.END
+
+        await update.message.reply_text(
+            "Задайте ваш вопрос и администрация клана ответит вам в ближайшее время:\n\n"
+            "Или нажмите '❌ Отменить' для возврата в главное меню.",
+            reply_markup=self.cancel_keyboard()
+        )
+        return QUESTION
+
+    async def receive_question(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.message.from_user
+        text = update.message.text
+
+        # Проверяем заблокирован ли пользователь
+        if db.is_user_banned(user.id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return ConversationHandler.END
+
+        # Проверяем отмену
+        if text == "❌ Отменить":
+            await update.message.reply_text(
+                "❌ Создание вопроса отменено.",
+                reply_markup=self.main_keyboard(user.id)
+            )
+            return ConversationHandler.END
+
+        db.add_question(user.id, text)
+        db.log_action(user.id, "ask_question", f"Вопрос: {text[:50]}...")
+
+        # Уведомляем пользователя
+        await update.message.reply_text(
+            "✅ Ваш вопрос отправлен администрации и находится на рассмотрении. Ожидайте ответа!",
+            reply_markup=self.main_keyboard(user.id)
+        )
+
+        # Уведомляем админов
+        for admin_id in ADMIN_IDS:
+            try:
+                await self.application.bot.send_message(
+                    admin_id,
+                    f"❓ Новый вопрос от @{user.username}:\n\n{text}"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
+
+        return ConversationHandler.END
+
+    async def moderation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.message.from_user
+
+        # Проверяем заблокирован ли пользователь
+        if db.is_user_banned(user.id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return ConversationHandler.END
+
+        await update.message.reply_text(
+            "📝 Заполните анкету для подачи заявки в модераторы:\n\n"
+            "‼️🇷🇺При написании заявки необходимо соблюдать все правила русского языка.🇷🇺‼️\n"
+            "1️⃣. Ваш ник:  \n"
+            "2️⃣. Ваш возраст:\n"
+            "3️⃣. Выдавали блокировку игрокам на сервере?:\n"
+            "4️⃣. Дайте определение словам Бан/Мут/Варн:\n"
+            "5️⃣. Есть опыт модерирования?:\n"
+            "6️⃣. Напишите небольшой рассказ о себе(не менее двадцати слов)\n"
+            "7️⃣. Сколько времени Вы, готовы уделять набору в клан?\n"
+            "8️⃣. Почему именно наш клан?\n"
+            "9️⃣.Кто вас пригласил на стажёра? (Необязательно если узнали сами)\n\n"
+            "                ‼️Важно‼️\n"
+            "‼️Если вашу заявку одобряют, то вы становитесь на пост ✅стажёра✅ клана.‼️\n"
+            "⚙️На стажёрке нельзя брать отгулы.⚙️\n"
+            "‼️Максимальное время на стажировке -  7 дней с момента выдачи роли .‼️\n"
+            "❌Получение 1 выговора на стажировке - снятие❌\n\n\n"
+            "⚙️На рассмотрение заявки может уйти от 1️⃣ до 2️⃣ дней⚙️\n\n"
+            "Отправьте всю информацию одним сообщением.\n"
+            "Или нажмите '❌ Отменить' для возврата в главное меню.",
+            reply_markup=self.cancel_keyboard()
+        )
+        return MODERATION
+
+    async def receive_moderation(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.message.from_user
+        text = update.message.text
+
+        # Проверяем заблокирован ли пользователь
+        if db.is_user_banned(user.id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return ConversationHandler.END
+
+        # Проверяем отмену
+        if text == "❌ Отменить":
+            await update.message.reply_text(
+                "❌ Подача заявки отменена.",
+                reply_markup=self.main_keyboard(user.id)
+            )
+            return ConversationHandler.END
+
+        db.add_application(user.id, text)
+        db.log_action(user.id, "submit_application", f"Заявка: {text[:50]}...")
+
+        # Уведомляем пользователя
+        await update.message.reply_text(
+            "✅ Ваша заявка отправлена на рассмотрение! "
+            "Администрация свяжется с вами в ближайшее время.",
+            reply_markup=self.main_keyboard(user.id)
+        )
+
+        # Уведомляем админов
+        for admin_id in ADMIN_IDS:
+            try:
+                await self.application.bot.send_message(
+                    admin_id,
+                    f"📝 Новая заявка в модерацию от @{user.username}:\n\n{text}"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
+
+        return ConversationHandler.END
+
+    async def cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.message.from_user.id
+        await update.message.reply_text(
+            "Диалог отменен.",
+            reply_markup=self.main_keyboard(user_id)
+        )
+        return ConversationHandler.END
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.message.from_user.id
+        text = update.message.text
+
+        # Проверяем режим обслуживания
+        if self.maintenance_mode and user_id not in ADMIN_IDS:
+            await update.message.reply_text(
+                "🔴 Бот временно находится в режиме обслуживания. "
+                "Пожалуйста, попробуйте позже."
+            )
+            return
+
+        # Проверяем заблокирован ли пользователь
+        if db.is_user_banned(user_id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return
+
+        # Обработка ответа на вопрос
+        if 'answering_question' in context.user_data:
+            question_id = context.user_data.pop('answering_question')
+            question = db.get_question(question_id)
+
+            try:
+                await self.application.bot.send_message(
+                    question['user_id'],
+                    f"💬 Ответ от администрации на ваш вопрос:\n\n{text}"
+                )
+                db.update_question_status(question_id, "answered", user_id)
+                db.log_action(user_id, "answer_question", f"Вопрос #{question_id}")
+                await update.message.reply_text("✅ Ответ отправлен пользователю.",
+                                                reply_markup=self.main_keyboard(user_id))
+            except Exception as e:
+                await update.message.reply_text("❌ Ошибка отправки ответа.", reply_markup=self.main_keyboard(user_id))
+            return
+
+        # Основные кнопки
+        if text == "❓ Вопрос":
+            return await self.question(update, context)
+        elif text == "📝 Набор в модерацию":
+            return await self.moderation(update, context)
+        elif text == "📜 Правила клана":
+            await self.show_rules(update, context)
+        elif text == "👑 Панель администратора" and user_id in ADMIN_IDS:
+            await self.admin_panel(update, context)
+        elif text == "💬 Обратная связь":
+            return await self.feedback(update, context)
+        elif text == "ℹ️ О боте":
+            await self.bot_status(update, context)
+        else:
+            await update.message.reply_text(
+                "Используйте кнопки для навигации:",
+                reply_markup=self.main_keyboard(user_id)
+            )
+
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+
+        user_id = query.from_user.id
+
+        # Проверяем режим обслуживания для обычных пользователей
+        if self.maintenance_mode and user_id not in ADMIN_IDS:
+            await query.edit_message_text(
+                "🔴 Бот временно находится в режиме обслуживания. "
+                "Пожалуйста, попробуйте позже."
+            )
+            return
+
+        if query.data == "admin_back":
+            await query.edit_message_text(
+                "Возврат в главное меню:",
+                reply_markup=None
+            )
+            await query.message.reply_text(
+                "👑 Панель администратора закрыта.",
+                reply_markup=self.main_keyboard(user_id)
+            )
+            return
+
+        if user_id not in ADMIN_IDS and not query.data.startswith("feedback_"):
+            await query.edit_message_text("❌ У вас нет прав администратора.")
+            return
+
+        data = query.data
+
+        # Обработка фидбека
+        if data.startswith("feedback_"):
+            if data == "feedback_cancel":
+                await query.edit_message_text(
+                    "❌ Отправка отзыва отменена.",
+                    reply_markup=self.main_keyboard(user_id)
+                )
+                return
+            
+            elif data == "feedback_text":
+                await query.edit_message_text(
+                    "💬 Напишите ваш текстовый отзыв:\n\n"
+                    "Или нажмите '❌ Отменить' для возврата.",
+                    reply_markup=self.cancel_keyboard()
+                )
+                context.user_data['feedback_mode'] = True
+                return
+            
+            else:
+                # Обработка рейтинга
+                rating = int(data.split('_')[1])
+                await query.edit_message_text(
+                    f"⭐ Спасибо за оценку {rating}/5!\n"
+                    f"Вы можете дополнить её текстовым отзывом:\n\n"
+                    f"Или нажмите '❌ Отменить' для возврата.",
+                    reply_markup=self.cancel_keyboard()
+                )
+                context.user_data['feedback_rating'] = rating
+                context.user_data['feedback_mode'] = True
+                return
+
+        # Админские команды
+        if data == "admin_applications":
+            await self.show_applications(query, context)
+        elif data == "admin_questions":
+            await self.show_questions(query, context)
+        elif data == "admin_stats":
+            await self.show_stats(query, context)
+        elif data == "admin_banned":
+            await self.show_banned_users_callback(query, context)
+        elif data == "admin_users":
+            await self.send_users_page(query, context, page=0)
+        elif data == "admin_search_user":
+            await query.edit_message_text(
+                "🔍 Введите username, имя или фамилию пользователя для поиска:",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
+                ])
+            )
+            context.user_data['searching_user'] = True
+        elif data == "admin_recent_users":
+            await self.recent_users_callback(query, context)
+        elif data == "admin_feedback":
+            await self.show_feedback_callback(query, context)
+        elif data == "admin_logs":
+            await self.show_logs_callback(query, context)
+        elif data == "admin_settings":
+            await self.show_settings(query, context)
+        elif data == "toggle_maintenance":
+            self.maintenance_mode = not self.maintenance_mode
+            status = "включен" if self.maintenance_mode else "выключен"
+            db.log_action(user_id, "toggle_maintenance", f"Режим обслуживания: {status}")
+            await self.show_settings(query, context)
+        elif data == "export_data":
+            await self.export_data_callback(query, context)
+        elif data == "cleanup_data":
+            await self.cleanup_data_callback(query, context)
+        elif data == "backup_db":
+            await self.backup_database_callback(query, context)
+        elif data.startswith("users_page_"):
+            parts = query.data.split('_')
+            page = int(parts[2])
+            search_query = parts[3] if len(parts) > 3 and parts[3] else None
+            await self.send_users_page(query, context, page=page, search_query=search_query)
+        elif data.startswith("app_"):
+            await self.handle_application_action(query, data, context)
+        elif data.startswith("question_"):
+            await self.handle_question_action(query, data, context)
+        else:
+            # Обработка других callback данных
+            await query.edit_message_text(
+                "❌ Неизвестная команда. Попробуйте снова.",
+                reply_markup=self.admin_keyboard()
+            )
+
+    async def show_applications(self, query, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            applications = db.get_pending_applications()
+            if not applications:
+                await query.edit_message_text("✅ Нет новых заявок.", reply_markup=self.admin_keyboard())
+                return
+
+            app = applications[0]
+
+            # Получаем информацию о рассматривающем администраторе
+            reviewer_info = ""
+            if app['reviewed_by']:
+                reviewer_name = self.format_admin_name(app['reviewed_by'])
+                reviewer_info = f"\n👤 Рассматривает: {reviewer_name}"
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("👀 Рассмотреть", callback_data=f"app_review_{app['id']}"),
+                ],
+                [
+                    InlineKeyboardButton("✅ Принять", callback_data=f"app_approve_{app['id']}"),
+                    InlineKeyboardButton("❌ Отклонить", callback_data=f"app_reject_{app['id']}")
+                ],
+                [InlineKeyboardButton("⏭️ Следующая", callback_data="admin_applications")],
+                [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            full_name = f"{app['first_name'] or ''} {app['last_name'] or ''}".strip()
+            username = f"@{app['username']}" if app['username'] else "без username"
+            text = (f"📝 Заявка #{app['id']}\n"
+                    f"👤: {full_name} ({username})\n"
+                    f"🆔: {app['user_id']}\n"
+                    f"📅: {app['created_at']}"
+                    f"{reviewer_info}\n\n"
+                    f"📄 Анкета:\n{app['application_text']}")
+
+            await query.edit_message_text(text, reply_markup=reply_markup)
+
+        except Exception as e:
+            logger.error(f"Ошибка при показе заявок: {e}")
+            await query.edit_message_text(
+                "❌ Произошла ошибка при загрузке заявок.",
+                reply_markup=self.admin_keyboard()
+            )
+
+    async def show_questions(self, query, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            questions = db.get_unanswered_questions()
+            if not questions:
+                await query.edit_message_text("✅ Нет новых вопросов.", reply_markup=self.admin_keyboard())
+                return
+
+            question = questions[0]
+
+            # Получаем информацию о рассматривающем администраторе
+            reviewer_info = ""
+            if question['reviewed_by']:
+                reviewer_name = self.format_admin_name(question['reviewed_by'])
+                reviewer_info = f"\n👤 Рассматривает: {reviewer_name}"
+
+            keyboard = [
+                [
+                    InlineKeyboardButton("👀 Рассмотреть", callback_data=f"question_review_{question['id']}"),
+                ],
+                [
+                    InlineKeyboardButton("✅ Ответить", callback_data=f"question_answer_{question['id']}"),
+                    InlineKeyboardButton("❌ Удалить", callback_data=f"question_delete_{question['id']}")
+                ],
+                [InlineKeyboardButton("⏭️ Следующий", callback_data="admin_questions")],
+                [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            full_name = f"{question['first_name'] or ''} {question['last_name'] or ''}".strip()
+            username = f"@{question['username']}" if question['username'] else "без username"
+            text = (f"❓ Вопрос #{question['id']}\n"
+                    f"👤: {full_name} ({username})\n"
+                    f"🆔: {question['user_id']}\n"
+                    f"📅: {question['created_at']}"
+                    f"{reviewer_info}\n\n"
+                    f"📄 Вопрос:\n{question['question_text']}")
+
+            await query.edit_message_text(text, reply_markup=reply_markup)
+
+        except Exception as e:
+            logger.error(f"Ошибка при показе вопросов: {e}")
+            await query.edit_message_text(
+                "❌ Произошла ошибка при загрузке вопросов.",
+                reply_markup=self.admin_keyboard()
+            )
+
+    async def show_stats(self, query, context: ContextTypes.DEFAULT_TYPE):
+        stats = db.get_stats()
+        text = (f"📊 Статистика бота:\n"
+                f"👥 Пользователей: {stats['total_users']}\n"
+                f"📝 Заявок: {stats['total_applications']}\n"
+                f"❓ Вопросов: {stats['total_questions']}\n"
+                f"💬 Отзывов: {stats['total_feedback']}\n"
+                f"⏳ Новых заявок: {stats['pending_applications']}\n"
+                f"⏳ Новых вопросов: {stats['unanswered_questions']}\n"
+                f"🚫 Заблокированных: {stats['banned_users']}\n"
+                f"🆕 Новых сегодня: {stats['new_users_today']}\n"
+                f"📈 Новых за неделю: {stats['new_users_week']}\n"
+                f"⭐ Средний рейтинг: {stats['avg_feedback_rating']}/5")
+
+        await query.edit_message_text(text, reply_markup=self.admin_keyboard())
+
+    async def show_banned_users_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Показать список заблокированных пользователей через callback"""
+        banned_users = db.get_banned_users()
+        if not banned_users:
+            await query.edit_message_text("✅ Нет заблокированных пользователей.", reply_markup=self.admin_keyboard())
+            return
+
+        banned_list = "🚫 ЗАБЛОКИРОВАННЫЕ ПОЛЬЗОВАТЕЛИ:\n\n"
+        for banned in banned_users:
+            banned_by = f"@{banned['banned_by_username']}" if banned['banned_by_username'] else f"ID: {banned['banned_by']}"
+            banned_list += (
+                f"👤 Пользователь: @{banned['username']} (ID: {banned['user_id']})\n"
+                f"📝 Причина: {banned['reason']}\n"
+                f"👮‍♂️ Заблокировал: {banned_by}\n"
+                f"📅 Дата: {banned['banned_at']}\n"
+                f"────────────────────\n"
+            )
+
+        await query.edit_message_text(banned_list, reply_markup=self.admin_keyboard())
+
+    async def show_settings(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Показать настройки"""
+        await query.edit_message_text(
+            "⚙️ НАСТРОЙКИ БОТА\n\n"
+            "Здесь вы можете управлять основными настройками бота:",
+            reply_markup=self.settings_keyboard()
+        )
+
+    async def show_feedback_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Показать фидбек через callback"""
+        feedback_list = db.get_feedback(limit=10)
+        
+        if not feedback_list:
+            await query.edit_message_text("💬 Пока нет отзывов от пользователей.", reply_markup=self.admin_keyboard())
+            return
+
+        message = "💬 ПОСЛЕДНИЕ ОТЗЫВЫ ПОЛЬЗОВАТЕЛЕЙ\n\n"
+        
+        for i, feedback in enumerate(feedback_list, 1):
+            username = f"@{feedback['username']}" if feedback['username'] else "без username"
+            full_name = f"{feedback['first_name'] or ''} {feedback['last_name'] or ''}".strip()
+            rating = "⭐" * feedback['rating'] if feedback['rating'] else "📝 Только текст"
+            date = feedback['created_at'].split()[0]
+            
+            message += f"{i}. {full_name} ({username})\n"
+            message += f"   {rating}\n"
+            message += f"   💬 {feedback['feedback_text'][:100]}{'...' if len(feedback['feedback_text']) > 100 else ''}\n"
+            message += f"   📅 {date}\n\n"
+
+        await query.edit_message_text(
+            message,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_back")]
+            ])
+        )
+
+    async def show_logs_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Показать логи через callback"""
+        logs = db.get_action_logs(limit=15)
+        
+        if not logs:
+            await query.edit_message_text("📝 Логи действий отсутствуют.", reply_markup=self.admin_keyboard())
+            return
+
+        message = "📝 ПОСЛЕДНИЕ ДЕЙСТВИЯ\n\n"
+        
+        for log in logs:
+            username = f"@{log['username']}" if log['username'] else f"ID:{log['user_id']}"
+            time = log['created_at'].split()[1][:5]  # только время
+            message += f"🕒 {time} | {username} | {log['action']}"
+            if log['details']:
+                message += f" | {log['details'][:30]}..."
+            message += "\n"
+
+        await query.edit_message_text(
+            message,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_back")]
+            ])
+        )
+
+    async def export_data_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Экспорт данных через callback"""
+        await self.export_data(query, context)
+
+    async def cleanup_data_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Очистка данных через callback"""
+        await query.edit_message_text(
+            "🧹 Введите количество дней для очистки старых данных (по умолчанию 30):\n\n"
+            "Или нажмите '❌ Отменить' для возврата.",
+            reply_markup=self.cancel_keyboard()
+        )
+        context.user_data['cleaning_data'] = True
+
+    async def backup_database_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Backup базы данных через callback"""
+        await self.backup_database(query, context)
+
+    async def recent_users_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Показать новых пользователей через callback"""
+        users = db.get_recent_users(days=7)
+        
+        if not users:
+            await query.edit_message_text("❌ Новых пользователей за последние 7 дней не найдено.", reply_markup=self.admin_keyboard())
+            return
+
+        message = "🆕 НОВЫЕ ПОЛЬЗОВАТЕЛИ (за последние 7 дней)\n\n"
+        
+        for i, user in enumerate(users, start=1):
+            username = f"@{user['username']}" if user['username'] else "без username"
+            full_name = f"{user['first_name'] or ''} {user['last_name'] or ''}".strip()
+            created_date = user['created_at'].split()[0] if user['created_at'] else "неизвестно"
+            
+            message += f"{i}. {full_name} ({username})\n"
+            message += f"   🆔: {user['user_id']}\n"
+            message += f"   📅: {created_date}\n\n"
+
+        message += f"📊 Всего новых пользователей: {len(users)}"
+
+        await query.edit_message_text(
+            message,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_back")]
+            ])
+        )
+
+    async def handle_application_action(self, query, data, context: ContextTypes.DEFAULT_TYPE):
+        user_id = query.from_user.id
+        action, app_id = data.split("_")[1], int(data.split("_")[2])
+        application = db.get_application(app_id)
+
+        if action == "review":
+            # Начать рассмотрение заявки
+            db.start_review_application(app_id, user_id)
+            db.log_action(user_id, "review_application", f"Заявка #{app_id}")
+
+            # Получаем информацию об администраторе для уведомления
+            admin_name = self.format_admin_name(user_id)
+
+            # Уведомляем пользователя
+            try:
+                await self.application.bot.send_message(
+                    application['user_id'],
+                    f"🔍 Ваша заявка на модерацию взята в рассмотрение администратором {admin_name}. Ожидайте решения!"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления пользователю: {e}")
+
+            await query.edit_message_text(
+                f"👀 Вы начали рассмотрение заявки #{app_id}",
+                reply_markup=self.admin_keyboard()
+            )
+
+        elif action == "approve":
+            db.update_application_status(app_id, "approved", user_id)
+            db.log_action(user_id, "approve_application", f"Заявка #{app_id}")
+
+            # Получаем информацию об администраторе для уведомления
+            admin_name = self.format_admin_name(user_id)
+
+            try:
+                await self.application.bot.send_message(
+                    application['user_id'],
+                    f"🎉 Ваша заявка на модерацию одобрена администратором {admin_name}!\n\n"
+                    f"📝 Ссылка на чат: {CHAT_LINK}\n\n"
+                    f"Присоединяйтесь к нашему чату для дальнейших инструкций!"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки сообщения пользователю: {e}")
+
+            await query.edit_message_text(f"✅ Заявка #{app_id} одобрена.", reply_markup=self.admin_keyboard())
+
+        elif action == "reject":
+            db.update_application_status(app_id, "rejected", user_id)
+            db.log_action(user_id, "reject_application", f"Заявка #{app_id}")
+
+            # Получаем информацию об администраторе для уведомления
+            admin_name = self.format_admin_name(user_id)
+
+            try:
+                await self.application.bot.send_message(
+                    application['user_id'],
+                    f"❌ К сожалению, ваша заявка на модерацию отклонена администратором {admin_name}."
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки сообщения пользователю: {e}")
+
+            await query.edit_message_text(f"❌ Заявка #{app_id} отклонена.", reply_markup=self.admin_keyboard())
+
+    async def handle_question_action(self, query, data, context: ContextTypes.DEFAULT_TYPE):
+        user_id = query.from_user.id
+        action, question_id = data.split("_")[1], int(data.split("_")[2])
+        question = db.get_question(question_id)
+
+        if action == "review":
+            # Начать рассмотрение вопроса
+            db.start_review_question(question_id, user_id)
+            db.log_action(user_id, "review_question", f"Вопрос #{question_id}")
+
+            # Получаем информацию об администраторе для уведомления
+            admin_name = self.format_admin_name(user_id)
+
+            # Уведомляем пользователя
+            try:
+                await self.application.bot.send_message(
+                    question['user_id'],
+                    f"🔍 Ваш вопрос взят в рассмотрение администратором {admin_name}. Скоро вы получите ответ!"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки уведомления пользователю: {e}")
+
+            await query.edit_message_text(
+                f"👀 Вы начали рассмотрение вопроса #{question_id}",
+                reply_markup=self.admin_keyboard()
+            )
+
+        elif action == "answer":
+            context.user_data['answering_question'] = question_id
+            await query.edit_message_text(
+                f"💬 Введите ответ на вопрос от @{question['username']}:"
+            )
+        elif action == "delete":
+            db.update_question_status(question_id, "deleted", user_id)
+            db.log_action(user_id, "delete_question", f"Вопрос #{question_id}")
+
+            # Получаем информацию об администраторе для уведомления
+            admin_name = self.format_admin_name(user_id)
+
+            await query.edit_message_text(f"✅ Вопрос #{question_id} удален администратором {admin_name}.",
+                                          reply_markup=self.admin_keyboard())
+
+    async def notify_admins_about_review(self, reviewer_id, item_type, item_id, item_info):
+        """Уведомление администраторов о начале рассмотрения заявки/вопроса"""
+        reviewer_name = self.format_admin_name(reviewer_id)
+
+        if item_type == "application":
+            message = (
+                f"🔍 Администратор {reviewer_name} начал рассмотрение заявки #{item_id}\n"
+                f"👤 Кандидат: @{item_info['username']} (ID: {item_info['user_id']})\n"
+                f"📅 Время создания: {item_info['created_at']}"
+            )
+        elif item_type == "question":
+            message = (
+                f"🔍 Администратор {reviewer_name} начал рассмотрение вопроса #{item_id}\n"
+                f"👤 Автор: @{item_info['username']} (ID: {item_info['user_id']})\n"
+                f"📅 Время создания: {item_info['created_at']}"
+            )
+        else:
+            return
+
+        # Уведомляем всех админов кроме того, кто начал рассмотрение
+        for admin_id in ADMIN_IDS:
+            if admin_id != reviewer_id:
+                try:
+                    await self.application.bot.send_message(admin_id, message)
+                except Exception as e:
+                    logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
+
+    def run(self):
+        """Запуск бота"""
+        if BOT_TOKEN == "ВАШ_ТОКЕН_БОТА_ЗДЕСЬ":
+            print("❌ ОШИБКА: Замените BOT_TOKEN на реальный токен вашего бота!")
+            print("1. Создайте бота через @BotFather в Telegram")
+            print("2. Получите токен")
+            print("3. Замените строку BOT_TOKEN в коде на ваш токен")
+            return
+
+        self.application = Application.builder().token(BOT_TOKEN).build()
+        self.setup_handlers()
+
+        print("✅ Бот запущен...")
+        print("🤖 Бот готов к работе!")
+        print("👑 Администраторы:", ADMIN_IDS)
+        print("🔧 Специальные отображения:", ADMIN_USERNAME_MAP)
+        print("💬 Ссылка на чат:", CHAT_LINK)
+        print("🛠️ Доступные команды:")
+        print("   /start - Запуск бота")
+        print("   /menu - Главное меню") 
+        print("   /admin - Панель администратора")
+        print("   /status - Статус бота")
+        print("   /help - Справка по командам")
+
+        self.application.run_polling()
+
+
+if __name__ == '__main__':
+    bot = MinecraftBot()
+    bot.run()
