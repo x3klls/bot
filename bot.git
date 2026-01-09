@@ -19,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ⚠️ ЗАМЕНИТЕ ЭТОТ ТОКЕН НА ВАШ РЕАЛЬНЫЙ ТОКЕН БОТА ⚠️
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8329306602:AAEDUSqKop0dWuSkUXnJAkS3V83Yyx0GdqI")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8520991754:AAFR1hSYkc4YW61nCkB3uijBDy0TE_70snM")
 
 # ⚠️ ЗАМЕНИТЕ НА ВАШ USER_ID ⚠️
 ADMIN_IDS = [1292233190, 7805404869, 7691643567, 5383429536]
@@ -2366,3 +2366,4 @@ class MinecraftBot:
 if __name__ == '__main__':
     bot = MinecraftBot()
     bot.run()
+
