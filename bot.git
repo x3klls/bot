@@ -40,7 +40,7 @@ ADMIN_USERNAME_MAP = {
 CHAT_LINK = "https://t.me/+fXw4XzUFj8RlNGQ6"
 
 # Информация о клане dyO
-CLAN INFORMATION = """
+CLAN_INFORMATION = """
 📜 Информация о клане dyO
 Приветствую тебя в клане dyO, хочу сказать пару слов о клане =)
 
@@ -2310,5 +2310,6 @@ class MinecraftBot:
 if __name__ == '__main__':
     bot = MinecraftBot()
     bot.run()
+
 
 
