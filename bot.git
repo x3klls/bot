@@ -28,7 +28,6 @@ ADMIN_IDS = [1292233190, 8025115013, 7691643567, 5383429536, 2141467987, 7805404
 LOG_CHAT_ID = -1003369623857  # ID чата из ссылки https://t.me/c/3369623857/5
 
 # ID темы (топика) в чате для логов (если используются темы)
-# Если темы не используются, оставьте None или 0
 LOG_TOPIC_ID = 5  # ID темы из ссылки (цифра после /)
 
 # Роли модераторов (изначально пусто, добавляются через команду)
@@ -52,9 +51,9 @@ ADMIN_USERNAME_MAP = {
     7805404869: "@hilliees"
 }
 
-#отображения ID модераторов (изначально пусто)
+# Специальные отображения ID модераторов (изначально пусто)
 MODERATOR_USERNAME_MAP = {
-    #/addmoderator
+    # Здесь будут добавляться модераторы через команду /addmoderator
 }
 
 # Ссылка на чат для принятых заявок
@@ -716,7 +715,7 @@ class MinecraftBot:
     def __init__(self):
         self.application = None
         self.maintenance_mode = False
-        self.bot_username = ""  # Замените на реальный username вашего бота
+        self.bot_username = "MinecraftDyO_Bot"  # Замените на реальный username вашего бота
 
     def setup_handlers(self):
         """Настройка обработчиков"""
@@ -2690,7 +2689,7 @@ class MinecraftBot:
                 reply_markup=self.admin_keyboard()
             )
 
-    # --- Методы для работы с черными списками ---
+    # --- МЕТОДЫ ДЛЯ ЧЕРНЫХ СПИСКОВ (НИКИ БЕЗ @) ---
     async def receive_blacklist_add(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Получение данных для добавления в черный список"""
         # Проверяем, что бот вызван в личном чате
@@ -2722,8 +2721,9 @@ class MinecraftBot:
 
         # Добавляем в базу
         if db.add_to_blacklist(username, list_type, reason, user_id):
+            # ОТВЕТ ПОЛЬЗОВАТЕЛЮ (НИК БЕЗ @)
             await update.message.reply_text(
-                f"✅ Игрок @{username} добавлен в {list_type}\n"
+                f"✅ Игрок {username} добавлен в {list_type}\n"
                 f"📝 Причина: {reason}",
                 reply_markup=self.main_keyboard(user_id)
             )
@@ -2732,18 +2732,19 @@ class MinecraftBot:
             # Получаем имя администратора для красивого уведомления
             admin_name = self.format_admin_name(user_id)
 
-            # Формируем текст уведомления
+            # ФОРМИРУЕМ ТЕКСТ УВЕДОМЛЕНИЯ (НИК БЕЗ @)
             log_message = (
                 f"➕ **Добавление в черный список**\n"
                 f"• **Администратор:** {admin_name}\n"
                 f"• **Список:** {list_type}\n"
-                f"• **Игрок:** @{username}\n"
+                f"• **Игрок:** {username}\n"
                 f"• **Причина:** {reason}"
             )
 
             # --- 1. Отправка в ЛС всем администраторам ---
+            failed_admins = []
             for admin_id in ADMIN_IDS:
-                if admin_id != user_id:  # Не отправляем самому себе
+                if admin_id != user_id:
                     try:
                         await self.application.bot.send_message(
                             admin_id,
@@ -2751,22 +2752,26 @@ class MinecraftBot:
                             parse_mode='Markdown'
                         )
                     except Exception as e:
+                        failed_admins.append(str(admin_id))
                         logger.error(f"Ошибка отправки уведомления админу {admin_id}: {e}")
+
+            if failed_admins:
+                await update.message.reply_text(
+                    f"⚠️ Не удалось отправить уведомление администраторам: {', '.join(failed_admins)}.\n"
+                    f"Возможно, они заблокировали бота или не писали ему в ЛС."
+                )
 
             # --- 2. Отправка в групповой чат для логов ---
             if LOG_CHAT_ID:
                 try:
-                    # Проверяем, нужно ли отправлять в конкретную тему
                     if LOG_TOPIC_ID:
-                        # Отправка в конкретную тему
                         await self.application.bot.send_message(
                             chat_id=LOG_CHAT_ID,
                             text=log_message,
-                            message_thread_id=LOG_TOPIC_ID,  # ID темы
+                            message_thread_id=LOG_TOPIC_ID,
                             parse_mode='Markdown'
                         )
                     else:
-                        # Отправка в общий чат (без темы)
                         await self.application.bot.send_message(
                             LOG_CHAT_ID,
                             log_message,
@@ -2778,7 +2783,9 @@ class MinecraftBot:
                     if "message thread not found" in str(e).lower():
                         error_text = f"⚠️ Ошибка: тема с ID {LOG_TOPIC_ID} не найдена. Проверьте правильность ID темы."
                     elif "chat not found" in str(e).lower():
-                        error_text = "⚠️ Ошибка: чат с ID {LOG_CHAT_ID} не найден. Проверьте права бота в чате."
+                        error_text = "⚠️ Ошибка: чат не найден. Проверьте права бота в чате."
+                    elif "forbidden" in str(e).lower():
+                        error_text = "⚠️ Ошибка: бот не имеет прав для отправки в этот чат. Добавьте бота в группу."
 
                     await update.message.reply_text(error_text)
         else:
@@ -2820,7 +2827,7 @@ class MinecraftBot:
         # Проверяем, есть ли в списке
         if not db.check_in_blacklist(username, list_type):
             await update.message.reply_text(
-                f"❌ Игрок @{username} не найден в {list_type}",
+                f"❌ Игрок {username} не найден в {list_type}",
                 reply_markup=self.main_keyboard(user_id)
             )
             context.user_data.pop('awaiting_blacklist_remove', None)
@@ -2829,8 +2836,9 @@ class MinecraftBot:
 
         # Удаляем из базы
         if db.remove_from_blacklist(username, list_type):
+            # ОТВЕТ ПОЛЬЗОВАТЕЛЮ (НИК БЕЗ @)
             await update.message.reply_text(
-                f"✅ Игрок @{username} удален из {list_type}",
+                f"✅ Игрок {username} удален из {list_type}",
                 reply_markup=self.main_keyboard(user_id)
             )
             db.log_action(user_id, "remove_from_blacklist", f"{list_type}: {username}")
@@ -2838,15 +2846,16 @@ class MinecraftBot:
             # Получаем имя администратора для красивого уведомления
             admin_name = self.format_admin_name(user_id)
 
-            # Формируем текст уведомления
+            # ФОРМИРУЕМ ТЕКСТ УВЕДОМЛЕНИЯ (НИК БЕЗ @)
             log_message = (
                 f"➖ **Удаление из черного списка**\n"
                 f"• **Администратор:** {admin_name}\n"
                 f"• **Список:** {list_type}\n"
-                f"• **Игрок:** @{username}"
+                f"• **Игрок:** {username}"
             )
 
             # --- 1. Отправка в ЛС всем администраторам ---
+            failed_admins = []
             for admin_id in ADMIN_IDS:
                 if admin_id != user_id:
                     try:
@@ -2856,22 +2865,26 @@ class MinecraftBot:
                             parse_mode='Markdown'
                         )
                     except Exception as e:
+                        failed_admins.append(str(admin_id))
                         logger.error(f"Ошибка отправки уведомления админу {admin_id}: {e}")
+
+            if failed_admins:
+                await update.message.reply_text(
+                    f"⚠️ Не удалось отправить уведомление администраторам: {', '.join(failed_admins)}.\n"
+                    f"Возможно, они заблокировали бота или не писали ему в ЛС."
+                )
 
             # --- 2. Отправка в групповой чат для логов ---
             if LOG_CHAT_ID:
                 try:
-                    # Проверяем, нужно ли отправлять в конкретную тему
                     if LOG_TOPIC_ID:
-                        # Отправка в конкретную тему
                         await self.application.bot.send_message(
                             chat_id=LOG_CHAT_ID,
                             text=log_message,
-                            message_thread_id=LOG_TOPIC_ID,  # ID темы
+                            message_thread_id=LOG_TOPIC_ID,
                             parse_mode='Markdown'
                         )
                     else:
-                        # Отправка в общий чат (без темы)
                         await self.application.bot.send_message(
                             LOG_CHAT_ID,
                             log_message,
@@ -2883,7 +2896,9 @@ class MinecraftBot:
                     if "message thread not found" in str(e).lower():
                         error_text = f"⚠️ Ошибка: тема с ID {LOG_TOPIC_ID} не найдена. Проверьте правильность ID темы."
                     elif "chat not found" in str(e).lower():
-                        error_text = "⚠️ Ошибка: чат с ID {LOG_CHAT_ID} не найден. Проверьте права бота в чате."
+                        error_text = "⚠️ Ошибка: чат не найден. Проверьте права бота в чате."
+                    elif "forbidden" in str(e).lower():
+                        error_text = "⚠️ Ошибка: бот не имеет прав для отправки в этот чат. Добавьте бота в группу."
 
                     await update.message.reply_text(error_text)
         else:
@@ -2922,12 +2937,12 @@ class MinecraftBot:
         if clan_results:
             message += f"❌ ЧСК:\n"
             for item in clan_results:
-                message += f"   • @{item['username']} - {item['reason']}\n"
+                message += f"   • {item['username']} - {item['reason']}\n"
 
         if staff_results:
             message += f"\n🚫 ЧСКК:\n"
             for item in staff_results:
-                message += f"   • @{item['username']} - {item['reason']}\n"
+                message += f"   • {item['username']} - {item['reason']}\n"
 
         if not clan_results and not staff_results:
             message = f"❌ Ничего не найдено по запросу '{search_term}'"
@@ -2961,14 +2976,14 @@ class MinecraftBot:
         end = start + limit
         current_page = blacklist[start:end]
 
-        # Формируем сообщение
+        # Формируем сообщение (НИКИ БЕЗ @)
         list_name = "❌ ЧСК (Черный список клана)" if list_type == BLACKLIST_CLAN else "🚫 ЧСКК (Черный список команды)"
         message = f"{list_name}\n"
         message += f"📊 Всего: {total_items} игроков\n\n"
 
         for i, item in enumerate(current_page, start=start + 1):
             added_by = f" (админ ID:{item['added_by']})" if item['added_by'] != 0 else ""
-            message += f"{i}. @{item['username']}{added_by}\n"
+            message += f"{i}. {item['username']}{added_by}\n"
             if item['reason']:
                 message += f"   └ {item['reason']}\n"
 
