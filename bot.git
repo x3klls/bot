@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8460454617:AAHSl5BZueNVa-dOBXj8PlUFsn-9wfIVfe4")
 
 # ⚠️ ЗАМЕНИТЕ НА ВАШ USER_ID ⚠️
-ADMIN_IDS = [1292233190, 8025115013, 7691643567, 5383429536, 2141467987, 7805404869]
+ADMIN_IDS = [1292233190, 8025115013, 7691643567, 5383429536, 2141467987, 7805404869,7915981250]
 
 # ID чата для логов (замените на актуальный ID вашего чата)
 LOG_CHAT_ID = -1003369623857  # ID чата из ссылки https://t.me/c/3369623857/5
@@ -3456,5 +3456,6 @@ class MinecraftBot:
 if __name__ == '__main__':
     bot = MinecraftBot()
     bot.run()
+
 
 
