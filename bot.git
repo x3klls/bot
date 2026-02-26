@@ -48,7 +48,8 @@ ADMIN_USERNAME_MAP = {
     7691643567: "@anchous_faraon",
     5383429536: "@kanseysau",
     2141467987: "@Loveteaone",
-    7805404869: "@hilliees"
+    7805404869: "@hilliees
+    7915981250: "@mephistopxeles"
 }
 
 # Специальные отображения ID модераторов (изначально пусто)
@@ -3455,3 +3456,4 @@ class MinecraftBot:
 if __name__ == '__main__':
     bot = MinecraftBot()
     bot.run()
+
