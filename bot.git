@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8460454617:AAHSl5BZueNVa-dOBXj8PlUFsn-9wfIVfe4")
 
 # ⚠️ ЗАМЕНИТЕ НА ВАШ USER_ID ⚠️
-ADMIN_IDS = [1292233190, 8025115013, 7691643567, 5383429536, 2141467987, 7805404869,7915981250]
+ADMIN_IDS = [1292233190, 8025115013, 7691643567, 5383429536, 2141467987, 7805404869,7915981250,1498766474]
 
 # ID чата для логов (замените на актуальный ID вашего чата)
 LOG_CHAT_ID = -1003369623857  # ID чата из ссылки https://t.me/c/3369623857/5
@@ -49,7 +49,8 @@ ADMIN_USERNAME_MAP = {
     5383429536: "@kanseysau",
     2141467987: "@Loveteaone",
     7805404869: "@hilliees",
-    7915981250: "@mephistopxeles"
+    7915981250: "@mephistopxeles
+    1498766474: "@highOm2w3sye4hif1geiliuag12"
 }
 
 # Специальные отображения ID модераторов (изначально пусто)
@@ -3456,6 +3457,7 @@ class MinecraftBot:
 if __name__ == '__main__':
     bot = MinecraftBot()
     bot.run()
+
 
 
 
