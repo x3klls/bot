@@ -19,10 +19,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ⚠️ ЗАМЕНИТЕ ЭТОТ ТОКЕН НА ВАШ РЕАЛЬНЫЙ ТОКЕН БОТА ⚠️
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8460454617:AAHSl5BZueNVa-dOBXj8PlUFsn-9wfIVfe4")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8014292531:AAFTKKn0TgJOvvpYNC986f86GHiRI8oke9w")
 
 # ⚠️ ЗАМЕНИТЕ НА ВАШ USER_ID ⚠️
-ADMIN_IDS = [1292233190, 8025115013, 7691643567, 5383429536, 2141467987, 7805404869, 1498766474]
+ADMIN_IDS = [1292233190, 8025115013, 7691643567, 5383429536, 2141467987, 7805404869]
 
 # ID чата для логов (замените на актуальный ID вашего чата)
 LOG_CHAT_ID = -1003369623857  # ID чата из ссылки https://t.me/c/3369623857/5
@@ -31,10 +31,11 @@ LOG_CHAT_ID = -1003369623857  # ID чата из ссылки https://t.me/c/336
 LOG_TOPIC_ID = 5  # ID темы из ссылки (цифра после /)
 
 # Роли модераторов (изначально пусто, добавляются через команду)
-MODERATOR_IDS = [7138585061, 5393098493, 7736134300, 8025115013]  # Список ID модераторов
+MODERATOR_IDS = []  # Список ID модераторов
 
-# Состояния для ConversationHandler (УДАЛЕН FEEDBACK)
-QUESTION, MODERATION, BROADCAST, USER_SEARCH, ADD_TO_BLACKLIST, REMOVE_FROM_BLACKLIST, BLACKLIST_SEARCH = range(7)
+# Состояния для ConversationHandler
+QUESTION, MODERATION, BROADCAST, USER_SEARCH, FEEDBACK, ADD_TO_BLACKLIST, REMOVE_FROM_BLACKLIST, BLACKLIST_SEARCH = range(
+    8)
 
 # Константы для черных списков
 BLACKLIST_CLAN = "ЧСК"
@@ -47,16 +48,12 @@ ADMIN_USERNAME_MAP = {
     7691643567: "@anchous_faraon",
     5383429536: "@kanseysau",
     2141467987: "@Loveteaone",
-    7805404869: "@hilliees",
-    1498766474: "@highOm2w3sye4hif1geiliuag12"
+    7805404869: "@hilliees"
 }
 
 # Специальные отображения ID модераторов (изначально пусто)
 MODERATOR_USERNAME_MAP = {
-    7736134300: "@giuuchk",
-    5393098493: "@mtbloooove",
-    7138585061: "@Fall3nKn1ght4r",
-    8025115013: "@errsetore"
+    # Здесь будут добавляться модераторы через команду /addmoderator
 }
 
 # Ссылка на чат для принятых заявок
@@ -70,8 +67,8 @@ CLAN_RULES = """
 Лидер клана : daquachi4r @x3klls
 
 Главный куратор : freg_grief854 @anchous_faraon
-Куратор : PhillipGraves @mephistopxeles
 Куратор : LY4HE_D0MA @Loveteaone
+Куратор : setore @hiertoy
 
 Клан занимает первые места в клан топе, активный. В клане много пвпшеров, билдеров.
 Просьба! Не нарушать то, что перечисленно ниже
@@ -93,7 +90,7 @@ INITIAL_BLACKLIST_CLAN = [
     "makar86", "PVPhackerTOP", "Luna4ka", "artkuz111", "EgorKir",
     "giornos", "zimoniks", "MrSabuk", "212334", "VitaHamus",
     "sasha_mahota", "aserot", "offnik2", "Mistik_XX", "kaktys1234",
-    "shiinoz01", "s_artem777_s", "Biban"
+    "shiinoz01"
 ]
 
 INITIAL_BLACKLIST_STAFF = [
@@ -175,7 +172,18 @@ class Database:
             )
         ''')
 
-        # Таблица настроек бота (УДАЛЕНА ТАБЛИЦА FEEDBACK)
+        # Таблица фидбека
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                feedback_text TEXT,
+                rating INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # Таблица настроек бота
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS bot_settings (
                 key TEXT PRIMARY KEY,
@@ -281,7 +289,12 @@ class Database:
             (user_id, question_text)
         )
 
-    # --- МЕТОДЫ FEEDBACK УДАЛЕНЫ ---
+    def add_feedback(self, user_id, feedback_text, rating=None):
+        """Добавление фидбека"""
+        self.execute_query(
+            "INSERT INTO feedback (user_id, feedback_text, rating) VALUES (?, ?, ?)",
+            (user_id, feedback_text, rating)
+        )
 
     def get_pending_applications(self):
         """Получение ожидающих заявок"""
@@ -448,14 +461,24 @@ class Database:
         )
         stats['questions_count'] = result[0]['count'] if result else 0
 
+        # Количество фидбеков
+        result = self.execute_query(
+            "SELECT COUNT(*) as count FROM feedback WHERE user_id = ?",
+            (user_id,),
+            fetch=True
+        )
+        stats['feedback_count'] = result[0]['count'] if result else 0
+
         # Последняя активность
         result = self.execute_query(
             "SELECT MAX(created_at) as last_activity FROM ("
             "SELECT created_at FROM applications WHERE user_id = ? "
             "UNION ALL "
-            "SELECT created_at FROM questions WHERE user_id = ?"
+            "SELECT created_at FROM questions WHERE user_id = ? "
+            "UNION ALL "
+            "SELECT created_at FROM feedback WHERE user_id = ?"
             ")",
-            (user_id, user_id),
+            (user_id, user_id, user_id),
             fetch=True
         )
         stats['last_activity'] = result[0]['last_activity'] if result else None
@@ -463,7 +486,7 @@ class Database:
         return stats
 
     def get_stats(self):
-        """Получение общей статистики (УБРАНА СТАТИСТИКА FEEDBACK)"""
+        """Получение общей статистики"""
         stats = {}
 
         result = self.execute_query("SELECT COUNT(*) as count FROM users", fetch=True)
@@ -474,6 +497,9 @@ class Database:
 
         result = self.execute_query("SELECT COUNT(*) as count FROM questions", fetch=True)
         stats['total_questions'] = result[0]['count'] if result else 0
+
+        result = self.execute_query("SELECT COUNT(*) as count FROM feedback", fetch=True)
+        stats['total_feedback'] = result[0]['count'] if result else 0
 
         result = self.execute_query(
             "SELECT COUNT(*) as count FROM applications WHERE status = 'pending'",
@@ -504,6 +530,13 @@ class Database:
         )
         stats['new_users_week'] = result[0]['count'] if result else 0
 
+        # Средний рейтинг фидбека
+        result = self.execute_query(
+            "SELECT AVG(rating) as avg_rating FROM feedback WHERE rating IS NOT NULL",
+            fetch=True
+        )
+        stats['avg_feedback_rating'] = round(result[0]['avg_rating'], 2) if result and result[0]['avg_rating'] else 0
+
         # Статистика черных списков
         result = self.execute_query("SELECT COUNT(*) as count FROM blacklist_clan", fetch=True)
         stats['blacklist_clan_count'] = result[0]['count'] if result else 0
@@ -513,37 +546,12 @@ class Database:
 
         return stats
 
-    # --- НОВЫЙ МЕТОД: БАН ПО ID (ДАЖЕ ЕСЛИ ПОЛЬЗОВАТЕЛЬ НЕ В БАЗЕ) ---
-    def ban_user_by_id(self, user_id, username, reason, banned_by):
-        """Блокировка пользователя по ID (создает запись даже если пользователь не в users)"""
-        try:
-            # Сначала проверяем, есть ли пользователь в таблице users
-            user_exists = self.execute_query(
-                "SELECT * FROM users WHERE user_id = ?",
-                (user_id,),
-                fetch=True
-            )
-
-            # Если пользователя нет в users, создаем минимальную запись
-            if not user_exists:
-                self.execute_query(
-                    "INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)",
-                    (user_id, username)
-                )
-
-            # Добавляем в бан
-            self.execute_query(
-                "INSERT OR REPLACE INTO banned_users (user_id, username, reason, banned_by) VALUES (?, ?, ?, ?)",
-                (user_id, username, reason, banned_by)
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Ошибка бана по ID {user_id}: {e}")
-            return False
-
     def ban_user(self, user_id, username, reason, banned_by):
-        """Блокировка пользователя (старый метод, теперь вызывает новый)"""
-        return self.ban_user_by_id(user_id, username, reason, banned_by)
+        """Блокировка пользователя"""
+        self.execute_query(
+            "INSERT OR REPLACE INTO banned_users (user_id, username, reason, banned_by) VALUES (?, ?, ?, ?)",
+            (user_id, username, reason, banned_by)
+        )
 
     def unban_user(self, user_id):
         """Разблокировка пользователя"""
@@ -594,6 +602,16 @@ class Database:
             "SELECT al.*, u.username, u.first_name, u.last_name FROM action_logs al "
             "LEFT JOIN users u ON al.user_id = u.user_id "
             "ORDER BY al.created_at DESC LIMIT ?",
+            (limit,),
+            fetch=True
+        )
+
+    def get_feedback(self, limit=20):
+        """Получение фидбека"""
+        return self.execute_query(
+            "SELECT f.*, u.username, u.first_name, u.last_name FROM feedback f "
+            "LEFT JOIN users u ON f.user_id = u.user_id "
+            "ORDER BY f.created_at DESC LIMIT ?",
             (limit,),
             fetch=True
         )
@@ -700,7 +718,7 @@ class MinecraftBot:
         self.bot_username = "MinecraftDyO_Bot"  # Замените на реальный username вашего бота
 
     def setup_handlers(self):
-        """Настройка обработчиков (УДАЛЕН FEEDBACK)"""
+        """Настройка обработчиков"""
         conv_handler = ConversationHandler(
             entry_points=[
                 MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
@@ -710,6 +728,7 @@ class MinecraftBot:
                 MODERATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_moderation)],
                 BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_broadcast)],
                 USER_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_user_search)],
+                FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_feedback)],
                 ADD_TO_BLACKLIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_blacklist_add)],
                 REMOVE_FROM_BLACKLIST: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_blacklist_remove)],
                 BLACKLIST_SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.receive_blacklist_search)],
@@ -723,6 +742,7 @@ class MinecraftBot:
         self.application.add_handler(CommandHandler("menu", self.show_menu))
         self.application.add_handler(CommandHandler("rules", self.show_rules))
         self.application.add_handler(CommandHandler("ping", self.ping))
+        self.application.add_handler(CommandHandler("feedback", self.feedback))
         self.application.add_handler(CommandHandler("status", self.bot_status))
         self.application.add_handler(CommandHandler("id", self.get_user_id))
 
@@ -737,14 +757,9 @@ class MinecraftBot:
         self.application.add_handler(CommandHandler("removemoderator", self.remove_moderator))
         self.application.add_handler(CommandHandler("admins", self.show_admins))
         self.application.add_handler(CommandHandler("moderators", self.show_moderators))
-
-        # НОВЫЕ КОМАНДЫ ДЛЯ БАНА ПО ID
         self.application.add_handler(CommandHandler("ban", self.ban_user_command))
-        self.application.add_handler(CommandHandler("banid", self.ban_user_by_id_command))
         self.application.add_handler(CommandHandler("unban", self.unban_user_command))
-        self.application.add_handler(CommandHandler("unbanid", self.unban_user_by_id_command))
         self.application.add_handler(CommandHandler("banned", self.show_banned_users))
-
         self.application.add_handler(CommandHandler("users", self.show_users))
         self.application.add_handler(CommandHandler("finduser", self.find_user))
         self.application.add_handler(CommandHandler("userinfo", self.user_info))
@@ -754,6 +769,7 @@ class MinecraftBot:
         self.application.add_handler(CommandHandler("cleanup", self.cleanup_data))
         self.application.add_handler(CommandHandler("export", self.export_data))
         self.application.add_handler(CommandHandler("maintenance", self.maintenance_mode_command))
+        self.application.add_handler(CommandHandler("feedback_list", self.show_feedback))
         self.application.add_handler(CommandHandler("notify", self.notify_user))
         self.application.add_handler(CommandHandler("backup", self.backup_database))
 
@@ -761,10 +777,11 @@ class MinecraftBot:
         self.application.add_handler(conv_handler)
 
     def main_keyboard(self, user_id):
-        """Основная клавиатура с учетом прав (УБРАНА КНОПКА ОБРАТНОЙ СВЯЗИ)"""
+        """Основная клавиатура с учетом прав"""
         keyboard = [
             [KeyboardButton("❓ Вопрос"), KeyboardButton("📝 Набор в модерацию")],
-            [KeyboardButton("📜 Информация о клане"), KeyboardButton("ℹ️ О боте")]
+            [KeyboardButton("📜 Информация о клане"), KeyboardButton("💬 Обратная связь")],
+            [KeyboardButton("ℹ️ О боте")]
         ]
 
         # Добавляем кнопки для администраторов
@@ -778,7 +795,7 @@ class MinecraftBot:
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
     def admin_keyboard(self):
-        """Клавиатура админ-панели (УБРАНА КНОПКА ФИДБЕК)"""
+        """Клавиатура админ-панели"""
         keyboard = [
             [InlineKeyboardButton("📋 Заявки", callback_data="admin_applications")],
             [InlineKeyboardButton("❓ Вопросы", callback_data="admin_questions")],
@@ -787,6 +804,7 @@ class MinecraftBot:
             [InlineKeyboardButton("👥 Все пользователи", callback_data="admin_users")],
             [InlineKeyboardButton("🔍 Поиск пользователя", callback_data="admin_search_user")],
             [InlineKeyboardButton("🆕 Новые пользователи", callback_data="admin_recent_users")],
+            [InlineKeyboardButton("💬 Фидбек", callback_data="admin_feedback")],
             [InlineKeyboardButton("📝 Логи действий", callback_data="admin_logs")],
             [InlineKeyboardButton("⚙️ Настройки", callback_data="admin_settings")],
             [InlineKeyboardButton("📋 Управление ЧС", callback_data="admin_blacklist_menu")],
@@ -833,7 +851,18 @@ class MinecraftBot:
         ]
         return InlineKeyboardMarkup(keyboard)
 
-    # --- УДАЛЕНА feedback_keyboard ---
+    def feedback_keyboard(self):
+        """Клавиатура для фидбека"""
+        keyboard = [
+            [InlineKeyboardButton("⭐ 1", callback_data="feedback_1"),
+             InlineKeyboardButton("⭐ 2", callback_data="feedback_2"),
+             InlineKeyboardButton("⭐ 3", callback_data="feedback_3")],
+            [InlineKeyboardButton("⭐ 4", callback_data="feedback_4"),
+             InlineKeyboardButton("⭐ 5", callback_data="feedback_5")],
+            [InlineKeyboardButton("💬 Только текст", callback_data="feedback_text")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="feedback_cancel")]
+        ]
+        return InlineKeyboardMarkup(keyboard)
 
     def users_keyboard(self, page=0, total_pages=1, search_query=None):
         """Клавиатура для навигации по пользователям"""
@@ -993,7 +1022,8 @@ class MinecraftBot:
             "Здесь вы можете:\n"
             "• 📝 Подать заявку в модерацию\n"
             "• ❓ Задать вопрос администрации\n"
-            "• 📜 Ознакомиться с информацией о клане\n\n"
+            "• 📜 Ознакомиться с информацией о клане\n"
+            "• 💬 Оставить отзыв о работе бота\n\n"
             "Выберите опцию ниже 👇"
         )
 
@@ -1117,11 +1147,13 @@ class MinecraftBot:
             f"👥 Пользователей: {stats['total_users']}\n"
             f"📝 Заявок: {stats['total_applications']}\n"
             f"❓ Вопросов: {stats['total_questions']}\n"
+            f"💬 Отзывов: {stats['total_feedback']}\n"
             f"⏳ Новых заявок: {stats['pending_applications']}\n"
             f"⏳ Новых вопросов: {stats['unanswered_questions']}\n"
             f"🚫 Заблокированных: {stats['banned_users']}\n"
             f"🆕 Новых сегодня: {stats['new_users_today']}\n"
-            f"📈 Новых за неделю: {stats['new_users_week']}\n\n"
+            f"📈 Новых за неделю: {stats['new_users_week']}\n"
+            f"⭐ Средний рейтинг: {stats['avg_feedback_rating']}/5\n\n"
             f"📋 ЧЕРНЫЕ СПИСКИ:\n"
             f"❌ ЧСК: {stats['blacklist_clan_count']} игроков\n"
             f"🚫 ЧСКК: {stats['blacklist_staff_count']} игроков"
@@ -1350,178 +1382,8 @@ class MinecraftBot:
 
         await update.message.reply_text(moderator_list)
 
-    # --- НОВАЯ КОМАНДА: БАН ПО ID (ДАЖЕ ЕСЛИ ПОЛЬЗОВАТЕЛЬ НЕ В БАЗЕ) ---
-    async def ban_user_by_id_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для блокировки пользователя по ID"""
-        # Проверяем, что бот вызван в личном чате
-        if not await self.check_private_chat(update):
-            return
-
-        user_id = update.message.from_user.id
-
-        if user_id not in ADMIN_IDS:
-            await update.message.reply_text("❌ У вас нет прав для этой команды.")
-            return
-
-        if len(context.args) < 2:
-            await update.message.reply_text(
-                "❌ Использование: /banid <user_id> <причина>\n"
-                "Пример: /banid 123456789 Спам"
-            )
-            return
-
-        try:
-            target_id = int(context.args[0])
-            reason = ' '.join(context.args[1:])
-
-            # Получаем информацию о пользователе (если есть)
-            user_info = db.get_user_by_id(target_id)
-            username = user_info['username'] if user_info else f"ID:{target_id}"
-
-            # Блокируем пользователя
-            if db.ban_user_by_id(target_id, username, reason, user_id):
-                db.log_action(user_id, "ban_user_by_id", f"Заблокирован ID: {target_id}, причина: {reason}")
-
-                admin_name = self.format_admin_name(user_id)
-
-                # Отправляем подтверждение
-                await update.message.reply_text(
-                    f"✅ Пользователь (ID: {target_id}) заблокирован.\n"
-                    f"👮‍♂️ Заблокировал: {admin_name}\n"
-                    f"📝 Причина: {reason}"
-                )
-
-                # Формируем лог-сообщение
-                log_message = (
-                    f"🚫 **Блокировка по ID**\n"
-                    f"• **Администратор:** {admin_name}\n"
-                    f"• **ID пользователя:** `{target_id}`\n"
-                    f"• **Причина:** {reason}"
-                )
-
-                # Отправка в ЛС админам
-                failed_admins = []
-                for admin_id in ADMIN_IDS:
-                    if admin_id != user_id:
-                        try:
-                            await self.application.bot.send_message(
-                                admin_id,
-                                log_message,
-                                parse_mode='Markdown'
-                            )
-                        except Exception as e:
-                            failed_admins.append(str(admin_id))
-                            logger.error(f"Ошибка отправки уведомления админу {admin_id}: {e}")
-
-                if failed_admins:
-                    await update.message.reply_text(
-                        f"⚠️ Не удалось отправить уведомление администраторам: {', '.join(failed_admins)}"
-                    )
-
-                # Отправка в групповой чат
-                if LOG_CHAT_ID:
-                    try:
-                        if LOG_TOPIC_ID:
-                            await self.application.bot.send_message(
-                                chat_id=LOG_CHAT_ID,
-                                text=log_message,
-                                message_thread_id=LOG_TOPIC_ID,
-                                parse_mode='Markdown'
-                            )
-                        else:
-                            await self.application.bot.send_message(
-                                LOG_CHAT_ID,
-                                log_message,
-                                parse_mode='Markdown'
-                            )
-                    except Exception as e:
-                        logger.error(f"Ошибка отправки в лог-чат {LOG_CHAT_ID}: {e}")
-                        await update.message.reply_text("⚠️ Не удалось отправить уведомление в групповой чат.")
-            else:
-                await update.message.reply_text("❌ Ошибка при блокировке пользователя.")
-
-        except ValueError:
-            await update.message.reply_text("❌ Неверный ID пользователя. ID должен быть числом.")
-
-    # --- НОВАЯ КОМАНДА: РАЗБАН ПО ID ---
-    async def unban_user_by_id_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для разблокировки пользователя по ID"""
-        # Проверяем, что бот вызван в личном чате
-        if not await self.check_private_chat(update):
-            return
-
-        user_id = update.message.from_user.id
-
-        if user_id not in ADMIN_IDS:
-            await update.message.reply_text("❌ У вас нет прав для этой команды.")
-            return
-
-        if not context.args:
-            await update.message.reply_text("❌ Использование: /unbanid <user_id>")
-            return
-
-        try:
-            target_id = int(context.args[0])
-
-            # Проверяем заблокирован ли пользователь
-            if not db.is_user_banned(target_id):
-                await update.message.reply_text("❌ Этот пользователь не заблокирован.")
-                return
-
-            # Разблокируем пользователя
-            db.unban_user(target_id)
-            db.log_action(user_id, "unban_user_by_id", f"Разблокирован ID: {target_id}")
-
-            admin_name = self.format_admin_name(user_id)
-            await update.message.reply_text(
-                f"✅ Пользователь (ID: {target_id}) разблокирован.\n"
-                f"👮‍♂️ Разблокировал: {admin_name}"
-            )
-
-            # Лог-сообщение
-            log_message = (
-                f"✅ **Разблокировка по ID**\n"
-                f"• **Администратор:** {admin_name}\n"
-                f"• **ID пользователя:** `{target_id}`"
-            )
-
-            # Отправка в ЛС админам
-            for admin_id in ADMIN_IDS:
-                if admin_id != user_id:
-                    try:
-                        await self.application.bot.send_message(
-                            admin_id,
-                            log_message,
-                            parse_mode='Markdown'
-                        )
-                    except Exception as e:
-                        logger.error(f"Ошибка отправки уведомления админу {admin_id}: {e}")
-
-            # Отправка в групповой чат
-            if LOG_CHAT_ID:
-                try:
-                    if LOG_TOPIC_ID:
-                        await self.application.bot.send_message(
-                            chat_id=LOG_CHAT_ID,
-                            text=log_message,
-                            message_thread_id=LOG_TOPIC_ID,
-                            parse_mode='Markdown'
-                        )
-                    else:
-                        await self.application.bot.send_message(
-                            LOG_CHAT_ID,
-                            log_message,
-                            parse_mode='Markdown'
-                        )
-                except Exception as e:
-                    logger.error(f"Ошибка отправки в лог-чат {LOG_CHAT_ID}: {e}")
-
-        except ValueError:
-            await update.message.reply_text("❌ Неверный ID пользователя. ID должен быть числом.")
-
-    # --- ОБНОВЛЕННАЯ КОМАНДА: БАН ПО USERNAME (теперь использует новый метод) ---
     async def ban_user_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для блокировки пользователя по username"""
+        """Команда для блокировки пользователя"""
         # Проверяем, что бот вызван в личном чате
         if not await self.check_private_chat(update):
             return
@@ -1536,30 +1398,25 @@ class MinecraftBot:
             await update.message.reply_text("Использование: /ban @username причина_блокировки")
             return
 
-        username = context.args[0].lstrip('@')
+        username = context.args[0]
         reason = ' '.join(context.args[1:])
 
         # Получаем информацию о пользователе
         user_info = db.get_user_by_username(username)
-
-        if user_info:
-            # Пользователь есть в базе
-            target_id = user_info['user_id']
-            db.ban_user_by_id(target_id, username, reason, user_id)
-            await update.message.reply_text(
-                f"✅ Пользователь @{username} (ID: {target_id}) заблокирован.\n"
-                f"📝 Причина: {reason}"
-            )
-        else:
-            # Пользователя нет в базе - ищем по ID через другие методы?
-            await update.message.reply_text(
-                f"❌ Пользователь @{username} не найден в базе.\n"
-                f"Используйте /banid <ID> <причина> для блокировки по ID."
-            )
+        if not user_info:
+            await update.message.reply_text("❌ Пользователь с таким username не найден.")
             return
 
-        admin_name = self.format_admin_name(user_id)
+        # Блокируем пользователя
+        db.ban_user(user_info['user_id'], user_info['username'], reason, user_id)
         db.log_action(user_id, "ban_user", f"Заблокирован: @{username}, причина: {reason}")
+
+        admin_name = self.format_admin_name(user_id)
+        await update.message.reply_text(
+            f"✅ Пользователь @{user_info['username']} (ID: {user_info['user_id']}) заблокирован.\n"
+            f"👮‍♂️ Заблокировал: {admin_name}\n"
+            f"📝 Причина: {reason}"
+        )
 
         # Уведомляем всех админов
         for admin_id in ADMIN_IDS:
@@ -1567,15 +1424,14 @@ class MinecraftBot:
                 try:
                     await self.application.bot.send_message(
                         admin_id,
-                        f"🚫 Пользователь @{username} заблокирован администратором {admin_name}\n"
+                        f"🚫 Пользователь @{user_info['username']} заблокирован администратором {admin_name}\n"
                         f"📝 Причина: {reason}"
                     )
                 except Exception as e:
                     logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
 
-    # --- ОБНОВЛЕННАЯ КОМАНДА: РАЗБАН ПО USERNAME ---
     async def unban_user_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Команда для разблокировки пользователя по username"""
+        """Команда для разблокировки пользователя"""
         # Проверяем, что бот вызван в личном чате
         if not await self.check_private_chat(update):
             return
@@ -1590,15 +1446,12 @@ class MinecraftBot:
             await update.message.reply_text("Использование: /unban @username")
             return
 
-        username = context.args[0].lstrip('@')
+        username = context.args[0]
 
         # Получаем информацию о пользователе
         user_info = db.get_user_by_username(username)
         if not user_info:
-            await update.message.reply_text(
-                f"❌ Пользователь @{username} не найден.\n"
-                f"Используйте /unbanid <ID> для разблокировки по ID."
-            )
+            await update.message.reply_text("❌ Пользователь с таким username не найден.")
             return
 
         # Проверяем заблокирован ли пользователь
@@ -1612,7 +1465,7 @@ class MinecraftBot:
 
         admin_name = self.format_admin_name(user_id)
         await update.message.reply_text(
-            f"✅ Пользователь @{username} (ID: {user_info['user_id']}) разблокирован.\n"
+            f"✅ Пользователь @{user_info['username']} (ID: {user_info['user_id']}) разблокирован.\n"
             f"👮‍♂️ Разблокировал: {admin_name}"
         )
 
@@ -1638,7 +1491,7 @@ class MinecraftBot:
             banned_by = f"@{banned['banned_by_username']}" if banned[
                 'banned_by_username'] else f"ID: {banned['banned_by']}"
             banned_list += (
-                f"👤 Пользователь: {banned['username']} (ID: {banned['user_id']})\n"
+                f"👤 Пользователь: @{banned['username']} (ID: {banned['user_id']})\n"
                 f"📝 Причина: {banned['reason']}\n"
                 f"👮‍♂️ Заблокировал: {banned_by}\n"
                 f"📅 Дата: {banned['banned_at']}\n"
@@ -1861,6 +1714,7 @@ class MinecraftBot:
         message += "📊 СТАТИСТИКА:\n"
         message += f"   📝 Заявок подано: {user_stats['applications_count']}\n"
         message += f"   ❓ Вопросов задано: {user_stats['questions_count']}\n"
+        message += f"   💬 Отзывов оставлено: {user_stats['feedback_count']}\n"
 
         if user_stats['last_activity']:
             message += f"   ⏰ Последняя активность: {user_stats['last_activity']}\n"
@@ -1903,7 +1757,74 @@ class MinecraftBot:
 
         await message.edit_text(f"🏓 Понг! Задержка: {ping_time:.2f} мс")
 
-    # --- МЕТОДЫ FEEDBACK УДАЛЕНЫ ---
+    async def feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Обратная связь о работе бота"""
+        # Проверяем, что бот вызван в личном чате
+        if not await self.check_private_chat(update):
+            return ConversationHandler.END
+
+        user_id = update.message.from_user.id
+
+        if db.is_user_banned(user_id):
+            await update.message.reply_text("❌ Вы заблокированы и не можете использовать этого бота.")
+            return ConversationHandler.END
+
+        await update.message.reply_text(
+            "💬 Пожалуйста, оставьте ваш отзыв о работе бота.\n"
+            "Вы можете оценить бота от 1 до 5 звезд или просто написать текст.\n\n"
+            "Или нажмите '❌ Отмена' для возврата.",
+            reply_markup=self.feedback_keyboard()
+        )
+        return FEEDBACK
+
+    async def receive_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Получение фидбека от пользователя"""
+        # Проверяем, что бот вызван в личном чате
+        if not await self.check_private_chat(update):
+            return ConversationHandler.END
+
+        user = update.message.from_user
+        text = update.message.text
+
+        if text == "❌ Отменить":
+            await update.message.reply_text(
+                "❌ Отправка отзыва отменена.",
+                reply_markup=self.main_keyboard(user.id)
+            )
+            return ConversationHandler.END
+
+        # Проверяем, есть ли рейтинг в context.user_data
+        rating = context.user_data.get('feedback_rating')
+
+        # Сохраняем фидбек
+        db.add_feedback(user.id, text, rating)
+        db.log_action(user.id, "feedback", f"Рейтинг: {rating}, Текст: {text[:50]}...")
+
+        # Очищаем временные данные
+        context.user_data.pop('feedback_rating', None)
+        context.user_data.pop('feedback_mode', None)
+
+        thank_you_msg = "✅ Спасибо за ваш отзыв! Мы ценим ваше мнение и учтем его для улучшения бота."
+        if rating:
+            thank_you_msg = f"✅ Спасибо за оценку {rating}⭐ и отзыв! Мы ценим ваше мнение."
+
+        await update.message.reply_text(
+            thank_you_msg,
+            reply_markup=self.main_keyboard(user.id)
+        )
+
+        # Уведомляем админов о новом фидбеке
+        rating_text = f"Рейтинг: {rating}⭐" if rating else "Только текст"
+        for admin_id in ADMIN_IDS:
+            try:
+                await self.application.bot.send_message(
+                    admin_id,
+                    f"💬 Новый отзыв от @{user.username} ({rating_text}):\n\n{text}"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка уведомления админа {admin_id}: {e}")
+
+        return ConversationHandler.END
 
     async def bot_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Статус бота и статистика"""
@@ -1919,6 +1840,10 @@ class MinecraftBot:
         status_text += f"👥 Пользователей: {stats['total_users']}\n"
         status_text += f"📝 Заявок всего: {stats['total_applications']}\n"
         status_text += f"❓ Вопросов всего: {stats['total_questions']}\n"
+        status_text += f"💬 Отзывов: {stats['total_feedback']}\n"
+
+        if stats['avg_feedback_rating'] > 0:
+            status_text += f"⭐ Средний рейтинг: {stats['avg_feedback_rating']}/5\n"
 
         status_text += f"\n📊 ЗА СЕГОДНЯ:\n"
         status_text += f"   👥 Новых пользователей: {stats['new_users_today']}\n"
@@ -1977,7 +1902,38 @@ class MinecraftBot:
         else:
             await update.message.reply_text("❌ Использование: /maintenance on/off")
 
-    # --- МЕТОДЫ FEEDBACK УДАЛЕНЫ ---
+    async def show_feedback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Показать отзывы пользователей"""
+        # Проверяем, что бот вызван в личном чате
+        if not await self.check_private_chat(update):
+            return
+
+        user_id = update.message.from_user.id
+
+        if user_id not in ADMIN_IDS:
+            await update.message.reply_text("❌ У вас нет прав администратора.")
+            return
+
+        feedback_list = db.get_feedback(limit=20)
+
+        if not feedback_list:
+            await update.message.reply_text("💬 Пока нет отзывов от пользователей.")
+            return
+
+        message = "💬 ПОСЛЕДНИЕ ОТЗЫВЫ ПОЛЬЗОВАТЕЛЕЙ\n\n"
+
+        for i, feedback in enumerate(feedback_list, 1):
+            username = f"@{feedback['username']}" if feedback['username'] else "без username"
+            full_name = f"{feedback['first_name'] or ''} {feedback['last_name'] or ''}".strip()
+            rating = "⭐" * feedback['rating'] if feedback['rating'] else "📝 Только текст"
+            date = feedback['created_at'].split()[0]
+
+            message += f"{i}. {full_name} ({username})\n"
+            message += f"   {rating}\n"
+            message += f"   💬 {feedback['feedback_text'][:100]}{'...' if len(feedback['feedback_text']) > 100 else ''}\n"
+            message += f"   📅 {date}\n\n"
+
+        await update.message.reply_text(message)
 
     async def notify_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Отправить уведомление конкретному пользователю"""
@@ -2211,7 +2167,7 @@ class MinecraftBot:
                       f"Сообщение: {message_text[:50]}..., Успешно: {success_count}")
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Расширенная справка по командам (ОБНОВЛЕНА)"""
+        """Расширенная справка по командам"""
         # Проверяем, что бот вызван в личном чате
         if not await self.check_private_chat(update):
             return
@@ -2228,7 +2184,8 @@ class MinecraftBot:
         help_text += "/rules - Показать правила клана\n"
         help_text += "/ping - Проверить работоспособность бота\n"
         help_text += "/status - Статус бота и статистика\n"
-        help_text += "/id - Показать ваш ID\n\n"
+        help_text += "/id - Показать ваш ID\n"
+        help_text += "/feedback - Оставить отзыв о боте\n\n"
 
         # Команды администраторов
         if user_id in ADMIN_IDS:
@@ -2241,10 +2198,8 @@ class MinecraftBot:
             help_text += "/finduser - Поиск пользователя\n"
             help_text += "/recentusers - Новые пользователи\n"
             help_text += "/userinfo - Информация о пользователе\n"
-            help_text += "/ban @username <причина> - Заблокировать по username\n"
-            help_text += "/banid <ID> <причина> - Заблокировать по ID (даже если не заходил)\n"
-            help_text += "/unban @username - Разблокировать по username\n"
-            help_text += "/unbanid <ID> - Разблокировать по ID\n"
+            help_text += "/ban - Заблокировать пользователя\n"
+            help_text += "/unban - Разблокировать пользователя\n"
             help_text += "/banned - Список заблокированных\n"
             help_text += "/addadmin - Добавить администратора\n"
             help_text += "/removeadmin - Удалить администратора\n"
@@ -2254,6 +2209,7 @@ class MinecraftBot:
             help_text += "/broadcast - Рассылка сообщений\n"
             help_text += "/notify - Уведомить пользователя\n"
             help_text += "/logs - Логи действий\n"
+            help_text += "/feedback_list - Список отзывов\n"
             help_text += "/maintenance - Режим обслуживания\n"
             help_text += "/cleanup - Очистка старых данных\n"
             help_text += "/export - Экспорт данных\n"
@@ -2459,7 +2415,7 @@ class MinecraftBot:
                 await update.message.reply_text("❌ Ошибка отправки ответа.", reply_markup=self.main_keyboard(user_id))
             return
 
-        # Основные кнопки (УБРАНА КНОПКА ОБРАТНОЙ СВЯЗИ)
+        # Основные кнопки
         if text == "❓ Вопрос":
             return await self.question(update, context)
         elif text == "📝 Набор в модерацию":
@@ -2470,6 +2426,8 @@ class MinecraftBot:
             await self.admin_panel(update, context)
         elif text == "🛡️ Панель модератора" and (user_id in MODERATOR_IDS or user_id in ADMIN_IDS):
             await self.moderator_panel(update, context)
+        elif text == "💬 Обратная связь":
+            return await self.feedback(update, context)
         elif text == "ℹ️ О боте":
             await self.bot_status(update, context)
         else:
@@ -2516,14 +2474,43 @@ class MinecraftBot:
             )
             return
 
-        # Проверка прав для админских команд (УБРАНА feedback_)
-        if user_id not in ADMIN_IDS and not query.data.startswith(("mod_", "bl_view_")):
+        # Проверка прав для админских команд
+        if user_id not in ADMIN_IDS and not query.data.startswith(("feedback_", "mod_", "bl_view_")):
             await query.edit_message_text("❌ У вас нет прав администратора.")
             return
 
         data = query.data
 
-        # Обработка фидбека УДАЛЕНА
+        # Обработка фидбека
+        if data.startswith("feedback_"):
+            if data == "feedback_cancel":
+                await query.edit_message_text(
+                    "❌ Отправка отзыва отменена.",
+                    reply_markup=self.main_keyboard(user_id)
+                )
+                return
+
+            elif data == "feedback_text":
+                await query.edit_message_text(
+                    "💬 Напишите ваш текстовый отзыв:\n\n"
+                    "Или нажмите '❌ Отменить' для возврата.",
+                    reply_markup=self.cancel_keyboard()
+                )
+                context.user_data['feedback_mode'] = True
+                return FEEDBACK
+
+            else:
+                # Обработка рейтинга
+                rating = int(data.split('_')[1])
+                await query.edit_message_text(
+                    f"⭐ Спасибо за оценку {rating}/5!\n"
+                    f"Вы можете дополнить её текстовым отзывом:\n\n"
+                    f"Или нажмите '❌ Отменить' для возврата.",
+                    reply_markup=self.cancel_keyboard()
+                )
+                context.user_data['feedback_rating'] = rating
+                context.user_data['feedback_mode'] = True
+                return FEEDBACK
 
         # Админские команды
         if data == "admin_applications":
@@ -2547,6 +2534,8 @@ class MinecraftBot:
             return USER_SEARCH
         elif data == "admin_recent_users":
             await self.recent_users_callback(query, context)
+        elif data == "admin_feedback":
+            await self.show_feedback_callback(query, context)
         elif data == "admin_logs":
             await self.show_logs_callback(query, context)
         elif data == "admin_settings":
@@ -2688,12 +2677,11 @@ class MinecraftBot:
 
         elif data.startswith("ban_user_"):
             target_id = int(data.split('_')[2])
-            # Здесь можно открыть диалог для ввода причины
-            await query.edit_message_text(f"🚫 Используйте команду /banid {target_id} <причина> для блокировки.")
+            await query.edit_message_text(f"🚫 Используйте команду /ban для блокировки пользователя.")
 
         elif data.startswith("unban_user_"):
             target_id = int(data.split('_')[2])
-            await query.edit_message_text(f"✅ Используйте команду /unbanid {target_id} для разблокировки.")
+            await query.edit_message_text(f"✅ Используйте команду /unban для разблокировки пользователя.")
 
         else:
             await query.edit_message_text(
@@ -3154,11 +3142,13 @@ class MinecraftBot:
                 f"👥 Пользователей: {stats['total_users']}\n"
                 f"📝 Заявок: {stats['total_applications']}\n"
                 f"❓ Вопросов: {stats['total_questions']}\n"
+                f"💬 Отзывов: {stats['total_feedback']}\n"
                 f"⏳ Новых заявок: {stats['pending_applications']}\n"
                 f"⏳ Новых вопросов: {stats['unanswered_questions']}\n"
                 f"🚫 Заблокированных: {stats['banned_users']}\n"
                 f"🆕 Новых сегодня: {stats['new_users_today']}\n"
-                f"📈 Новых за неделю: {stats['new_users_week']}\n\n"
+                f"📈 Новых за неделю: {stats['new_users_week']}\n"
+                f"⭐ Средний рейтинг: {stats['avg_feedback_rating']}/5\n\n"
                 f"📋 ЧЕРНЫЕ СПИСКИ:\n"
                 f"❌ ЧСК: {stats['blacklist_clan_count']} игроков\n"
                 f"🚫 ЧСКК: {stats['blacklist_staff_count']} игроков")
@@ -3177,7 +3167,7 @@ class MinecraftBot:
             banned_by = f"@{banned['banned_by_username']}" if banned[
                 'banned_by_username'] else f"ID: {banned['banned_by']}"
             banned_list += (
-                f"👤 Пользователь: {banned['username']} (ID: {banned['user_id']})\n"
+                f"👤 Пользователь: @{banned['username']} (ID: {banned['user_id']})\n"
                 f"📝 Причина: {banned['reason']}\n"
                 f"👮‍♂️ Заблокировал: {banned_by}\n"
                 f"📅 Дата: {banned['banned_at']}\n"
@@ -3194,7 +3184,33 @@ class MinecraftBot:
             reply_markup=self.settings_keyboard()
         )
 
-    # --- МЕТОДЫ FEEDBACK УДАЛЕНЫ ---
+    async def show_feedback_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
+        """Показать фидбек через callback"""
+        feedback_list = db.get_feedback(limit=10)
+
+        if not feedback_list:
+            await query.edit_message_text("💬 Пока нет отзывов от пользователей.", reply_markup=self.admin_keyboard())
+            return
+
+        message = "💬 ПОСЛЕДНИЕ ОТЗЫВЫ ПОЛЬЗОВАТЕЛЕЙ\n\n"
+
+        for i, feedback in enumerate(feedback_list, 1):
+            username = f"@{feedback['username']}" if feedback['username'] else "без username"
+            full_name = f"{feedback['first_name'] or ''} {feedback['last_name'] or ''}".strip()
+            rating = "⭐" * feedback['rating'] if feedback['rating'] else "📝 Только текст"
+            date = feedback['created_at'].split()[0]
+
+            message += f"{i}. {full_name} ({username})\n"
+            message += f"   {rating}\n"
+            message += f"   💬 {feedback['feedback_text'][:100]}{'...' if len(feedback['feedback_text']) > 100 else ''}\n"
+            message += f"   📅 {date}\n\n"
+
+        await query.edit_message_text(
+            message,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_back")]
+            ])
+        )
 
     async def show_logs_callback(self, query, context: ContextTypes.DEFAULT_TYPE):
         """Показать логи через callback"""
@@ -3429,9 +3445,6 @@ class MinecraftBot:
         print("   /admin - Панель администратора")
         print("   /moderator - Панель модератора")
         print("   /blacklist - Управление ЧС")
-        print("   /ban /banid - Блокировка пользователей")
-        print("   /unban /unbanid - Разблокировка пользователей")
-        print("   /banned - Список заблокированных")
         print("   /status - Статус бота")
         print("   /help - Справка по командам")
         print("⚠️ Бот работает ТОЛЬКО в личных сообщениях (ЛС)")
